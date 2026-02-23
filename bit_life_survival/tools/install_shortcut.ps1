@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $launcher = Join-Path $repoRoot "bit_life_survival\tools\run_game.cmd"
 $desktop = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktop "Bit Life Survival.lnk"
