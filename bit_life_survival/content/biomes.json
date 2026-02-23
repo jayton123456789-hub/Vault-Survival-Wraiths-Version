@@ -4,17 +4,26 @@
     "name": "Ruined Suburbs",
     "meterDrainMul": {
       "stamina": 1.0,
-      "hydration": 1.2,
+      "hydration": 1.15,
       "morale": 1.0
     },
     "eventWeightMulByTag": {
-      "combat": 1.25,
       "hazard": 1.15,
-      "social": 1.1,
-      "trade": 0.9,
+      "combat": 1.2,
       "loot": 1.0,
-      "medical": 0.85
+      "trade": 0.95,
+      "social": 1.05,
+      "tech": 1.0
     },
-    "lootTableIds": ["suburbs_common", "suburbs_medical", "trader_stock", "ambush_spoils"]
+    "lootTableIds": [
+      "suburbs_common",
+      "suburbs_medical",
+      "suburbs_trade",
+      "suburbs_toxic",
+      "suburbs_hazard",
+      "suburbs_combat",
+      "suburbs_rare",
+      "suburbs_materials"
+    ]
   }
 ]

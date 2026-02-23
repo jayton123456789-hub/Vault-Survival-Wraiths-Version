@@ -11,41 +11,40 @@ Copied into repo-local runtime path `bit_life_survival/assets/bbwg_intro/`:
 - `dragon-studio-quick-whoosh-405448.mp3`
 - `dragon-studio-cinematic-intro-463216.mp3` (optional cinematic layer)
 
-No runtime file access uses the original downloads folder.
+Runtime never references the original download path.
 
 ## Intro Runtime Behavior
-Implemented in `bit_life_survival/app/intro.py`, called at startup from `bit_life_survival/app/main.py` before the main menu shell.
+Implemented in `bit_life_survival/app/intro.py`, called from `bit_life_survival/app/main.py` before the base screen.
 
-Timeline implemented per guide:
+Timeline per guide:
 - `0.0s - 0.5s`: black screen
 - `0.5s - 2.0s`: `LOGOframe1` with subtle ~2% scale-in
-- `2.0s`: hard cut to `LOGOframe2` + whoosh audio (no crossfade/slide)
-- `2.0s - 2.3s`: small shake, subtle flash, red glow spike
-- `2.3s - 4.5s`: aggressive hold on `LOGOframe2` with subtle pulse/breathing
-- `4.5s - 6.0s`: smooth fade to black
+- `2.0s`: hard cut to `LOGOframe2` + whoosh audio
+- `2.0s - 2.3s`: impact shake + subtle flash + red glow spike
+- `2.3s - 4.5s`: hold on `LOGOframe2` with mild pulse
+- `4.5s - 6.0s`: fade to black
 
-Skip support:
-- Any key press or mouse click skips immediately.
+Skip behavior:
+- Any key or mouse click skips immediately.
 
-## Replacing Intro Assets
+Failure handling:
+- Missing assets/codec/audio errors are logged as warnings.
+- App continues to the base screen instead of hard-failing.
+
+## How To Replace Assets
 1. Replace files in `bit_life_survival/assets/bbwg_intro/` using the same filenames.
-2. Keep `LOGOframe1.png` and `LOGOframe2.png` identical resolution and center/pivot alignment.
-3. Restart app; intro loader validates required files and frame dimension match.
+2. Keep `LOGOframe1.png` and `LOGOframe2.png` the same dimensions and alignment.
+3. Restart the app and verify intro playback.
 
-## Disable Intro
-Two supported switches:
-1. Environment variable:
-   - `BLS_DISABLE_INTRO=1`
-2. `settings.json` at repo root:
+## Disabling Intro
+1. Persistent setting in save data:
+   - In the Base screen, open `Settings` and toggle `skip_intro`.
+2. Optional repo-level config override via `settings.json` at repo root:
    ```json
    {
-     "disable_intro": true
+     "skip_intro": true,
+     "intro_use_cinematic_audio": false
    }
    ```
-
-Optional cinematic layer can be toggled via:
-```json
-{
-  "intro_use_cinematic_audio": false
-}
-```
+3. Environment override for one-off runs:
+   - `BLS_SKIP_INTRO=1`

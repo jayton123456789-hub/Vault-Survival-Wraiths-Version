@@ -6,7 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MeterName = Literal["stamina", "hydration", "morale"]
-ItemSlot = Literal["pack", "armor", "vehicle", "utility", "faction"]
+ItemSlot = Literal["pack", "armor", "vehicle", "utility", "faction", "consumable"]
+ItemRarity = Literal["common", "uncommon", "rare", "legendary"]
 
 RUNNER_EQUIP_SLOTS = ("pack", "armor", "vehicle", "utility1", "utility2", "faction")
 METER_NAMES: tuple[MeterName, MeterName, MeterName] = ("stamina", "hydration", "morale")
@@ -26,14 +27,14 @@ class ItemModifiers(StrictModel):
     noise: float | None = None
 
 
-class Durability(StrictModel):
-    max: float = Field(gt=0)
-    current: float | None = Field(default=None, ge=0)
+class ItemDurability(StrictModel):
+    max: int = Field(ge=1)
+    current: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def validate_bounds(self) -> "Durability":
+    def validate_current(self) -> "ItemDurability":
         if self.current is not None and self.current > self.max:
-            raise ValueError("durability.current cannot be greater than durability.max.")
+            raise ValueError("Item durability current cannot exceed max.")
         return self
 
 
@@ -42,9 +43,9 @@ class Item(StrictModel):
     name: str = Field(min_length=1)
     slot: ItemSlot
     tags: list[str] = Field(default_factory=list)
-    rarity: Literal["common", "uncommon", "rare", "legendary"]
+    rarity: ItemRarity
     modifiers: ItemModifiers = Field(default_factory=ItemModifiers)
-    durability: Durability | None = None
+    durability: ItemDurability | None = None
     value: float | None = Field(default=None, ge=0)
 
 
@@ -132,7 +133,8 @@ class EquippedSlots(StrictModel):
     faction: str | None = None
 
     def as_values(self) -> list[str]:
-        return [item_id for item_id in self.model_dump(mode="python").values() if item_id]
+        values = self.model_dump(mode="python")
+        return [item_id for item_id in values.values() if item_id]
 
 
 class GameState(StrictModel):
@@ -144,6 +146,7 @@ class GameState(StrictModel):
     meters: MeterValues = Field(default_factory=MeterValues)
     injury: float = Field(default=0.0, ge=0, le=100)
     flags: set[str] = Field(default_factory=set)
+    death_flags: set[str] = Field(default_factory=set)
     inventory: dict[str, int] = Field(default_factory=dict)
     equipped: EquippedSlots = Field(default_factory=EquippedSlots)
     dead: bool = False
@@ -175,6 +178,13 @@ class Citizen(StrictModel):
     quirk: str = Field(min_length=1)
 
 
+class SettingsState(StrictModel):
+    skip_intro: bool = False
+    intro_use_cinematic_audio: bool = True
+    seeded_mode: bool = True
+    base_seed: int = 1337
+
+
 class VaultState(StrictModel):
     storage: dict[str, int] = Field(default_factory=dict)
     blueprints: set[str] = Field(default_factory=set)
@@ -182,6 +192,25 @@ class VaultState(StrictModel):
     tav: int = 0
     vault_level: int = Field(default=1, alias="vaultLevel")
     citizen_queue: list[Citizen] = Field(default_factory=list)
+    current_citizen: Citizen | None = None
+    milestones: set[str] = Field(default_factory=set)
+    run_counter: int = 0
+    last_run_seed: int | str | None = None
+    claw_rng_state: int = 1
+    claw_rng_calls: int = 0
+    settings: SettingsState = Field(default_factory=SettingsState)
+
+    @field_validator("storage")
+    @classmethod
+    def validate_storage(cls, storage: dict[str, int]) -> dict[str, int]:
+        for item_id, qty in storage.items():
+            if qty < 0:
+                raise ValueError(f"Vault storage quantity for '{item_id}' cannot be negative.")
+        return storage
+
+
+class SaveData(StrictModel):
+    vault: VaultState
 
 
 def clamp_meter(value: float) -> float:
@@ -210,10 +239,7 @@ class LogEntry:
     data: dict[str, Any] | None = None
 
     def format(self) -> str:
-        return (
-            f"[s={self.step:03d} t={self.time:03d} d={self.distance:8.2f}] "
-            f"[{self.type.upper()}] {self.line}"
-        )
+        return f"[s={self.step:03d} t={self.time:03d} d={self.distance:8.2f}] [{self.type.upper()}] {self.line}"
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -101,6 +101,8 @@ def apply_outcomes(
         elif op == "setFlags":
             for flag in value:
                 state.flags.add(flag)
+                if flag in {"burned", "submerged", "fell", "toxic_exposure"}:
+                    state.death_flags.add(flag)
             logs.append(make_log_entry(state, "outcome", f"Flags set: {', '.join(value)}."))
 
         elif op == "unsetFlags":

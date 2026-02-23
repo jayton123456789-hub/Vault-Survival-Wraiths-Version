@@ -1,48 +1,386 @@
 [
   {
     "id": "suburbs_common",
-    "entries": [
-      { "itemId": "backpack_basic", "weight": 2, "min": 1, "max": 1 },
-      { "itemId": "canteen_dented", "weight": 3, "min": 1, "max": 2 },
-      { "itemId": "energy_gel", "weight": 3, "min": 1, "max": 2 },
-      { "itemId": "medkit_small", "weight": 2, "min": 1, "max": 1 },
-      { "itemId": "crowbar_heavy", "weight": 1, "min": 1, "max": 1 },
-      { "itemId": "lucky_charm", "weight": 1, "min": 1, "max": 1 },
-      { "itemId": "filter_mask", "weight": 1, "min": 1, "max": 1 }
-    ],
-    "rolls": 1
-  },
-  {
-    "id": "suburbs_medical",
-    "entries": [
-      { "itemId": "medkit_small", "weight": 6, "min": 1, "max": 2 },
-      { "itemId": "filter_mask", "weight": 3, "min": 1, "max": 1 },
-      { "itemId": "canteen_dented", "weight": 1, "min": 1, "max": 1 }
-    ],
     "rolls": 1,
-    "guaranteed": [
-      { "itemId": "energy_gel", "qty": 1 }
+    "entries": [
+      {
+        "itemId": "scrap",
+        "weight": 8,
+        "min": 1,
+        "max": 3
+      },
+      {
+        "itemId": "cloth",
+        "weight": 7,
+        "min": 1,
+        "max": 3
+      },
+      {
+        "itemId": "plastic",
+        "weight": 7,
+        "min": 1,
+        "max": 3
+      },
+      {
+        "itemId": "metal",
+        "weight": 6,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "water_pouch",
+        "weight": 5,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "ration_pack",
+        "weight": 5,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "canteen_dented",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "energy_gel",
+        "weight": 4,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "backpack_basic",
+        "weight": 1,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "sling_pack",
+        "weight": 1,
+        "min": 1,
+        "max": 1
+      }
     ]
   },
   {
-    "id": "trader_stock",
-    "entries": [
-      { "itemId": "armor_scrap", "weight": 2, "min": 1, "max": 1 },
-      { "itemId": "bike_rusty", "weight": 1, "min": 1, "max": 1 },
-      { "itemId": "radio_crank", "weight": 2, "min": 1, "max": 1 },
-      { "itemId": "rain_poncho", "weight": 2, "min": 1, "max": 1 },
-      { "itemId": "lucky_charm", "weight": 1, "min": 1, "max": 1 }
+    "id": "suburbs_medical",
+    "rolls": 1,
+    "guaranteed": [
+      {
+        "itemId": "antiseptic",
+        "qty": 1
+      }
     ],
-    "rolls": 1
+    "entries": [
+      {
+        "itemId": "med_supplies",
+        "weight": 8,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "medkit_small",
+        "weight": 6,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "med_armband",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "stim_patch",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "filter_mask",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "toxin_kit",
+        "weight": 1,
+        "min": 1,
+        "max": 1
+      }
+    ]
   },
   {
-    "id": "ambush_spoils",
+    "id": "suburbs_trade",
+    "rolls": 1,
     "entries": [
-      { "itemId": "medkit_small", "weight": 2, "min": 1, "max": 1 },
-      { "itemId": "crowbar_heavy", "weight": 3, "min": 1, "max": 1 },
-      { "itemId": "badge_police", "weight": 1, "min": 1, "max": 1 },
-      { "itemId": "energy_gel", "weight": 2, "min": 1, "max": 2 }
-    ],
-    "rolls": 1
+      {
+        "itemId": "trade_manifest",
+        "weight": 5,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "guild_token",
+        "weight": 4,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "trade_stamp",
+        "weight": 4,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "courier_pack",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "morale_cards",
+        "weight": 5,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "signal_flare",
+        "weight": 3,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "radio_parts",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "suburbs_toxic",
+    "rolls": 1,
+    "entries": [
+      {
+        "itemId": "filter_mask",
+        "weight": 5,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "water_purifier",
+        "weight": 4,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "toxin_kit",
+        "weight": 4,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "hazmat_shell",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "hazard_pack",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "fuel_cell",
+        "weight": 3,
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "id": "suburbs_hazard",
+    "rolls": 1,
+    "entries": [
+      {
+        "itemId": "repair_kit",
+        "weight": 5,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "rope_grapple",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "rain_poncho",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "padded_jacket",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "fuel_cell",
+        "weight": 4,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "metal",
+        "weight": 5,
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "id": "suburbs_combat",
+    "rolls": 1,
+    "entries": [
+      {
+        "itemId": "armor_scrap",
+        "weight": 5,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "riot_vest",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "lockpick_set",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "militia_band",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "energy_gel",
+        "weight": 3,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "repair_kit",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "suburbs_rare",
+    "rolls": 1,
+    "entries": [
+      {
+        "itemId": "expedition_pack",
+        "weight": 3,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "stealth_cloak",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "hacking_rig",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "sentinel_armor",
+        "weight": 1,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "scout_drone_bike",
+        "weight": 1,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "badge_police",
+        "weight": 2,
+        "min": 1,
+        "max": 1
+      },
+      {
+        "itemId": "vault_relic_pack",
+        "weight": 1,
+        "min": 1,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "suburbs_materials",
+    "rolls": 2,
+    "entries": [
+      {
+        "itemId": "scrap",
+        "weight": 9,
+        "min": 1,
+        "max": 4
+      },
+      {
+        "itemId": "cloth",
+        "weight": 9,
+        "min": 1,
+        "max": 4
+      },
+      {
+        "itemId": "plastic",
+        "weight": 9,
+        "min": 1,
+        "max": 4
+      },
+      {
+        "itemId": "metal",
+        "weight": 8,
+        "min": 1,
+        "max": 3
+      },
+      {
+        "itemId": "circuit_board",
+        "weight": 4,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "med_supplies",
+        "weight": 3,
+        "min": 1,
+        "max": 2
+      },
+      {
+        "itemId": "fuel_cell",
+        "weight": 2,
+        "min": 1,
+        "max": 2
+      }
+    ]
   }
 ]

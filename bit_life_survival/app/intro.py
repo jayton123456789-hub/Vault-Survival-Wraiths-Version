@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Callable
 
 import pygame
 
@@ -150,3 +151,53 @@ def play_intro(
         clock.tick(60)
 
     return skipped
+
+
+def play_startup_intro(
+    assets_dir: Path,
+    skip_intro: bool,
+    use_cinematic_audio: bool,
+    logger: Callable[[str], None] | None = None,
+) -> bool:
+    """
+    Play intro with graceful fallback.
+
+    Returns:
+    - True if user skipped intro.
+    - False if intro completed normally or was bypassed due to failure/settings.
+    """
+    if skip_intro:
+        return False
+
+    def _log(message: str) -> None:
+        if logger:
+            logger(message)
+
+    try:
+        pygame.init()
+        try:
+            pygame.mixer.init()
+        except pygame.error:
+            _log("Warning: intro audio unavailable (mixer init failed).")
+
+        pygame.display.set_caption("Bit Life Survival - Studio Intro")
+        screen = pygame.display.set_mode((1280, 720))
+        clock = pygame.time.Clock()
+        skipped = play_intro(
+            screen=screen,
+            clock=clock,
+            assets_dir=assets_dir,
+            allow_skip=True,
+            enable_cinematic_audio=use_cinematic_audio and pygame.mixer.get_init() is not None,
+        )
+        return skipped
+    except Exception as exc:  # noqa: BLE001
+        _log(f"Warning: BBWG intro failed ({exc}). Continuing to base screen.")
+        return False
+    finally:
+        try:
+            if pygame.mixer.get_init():
+                pygame.mixer.quit()
+        except Exception:
+            pass
+        pygame.quit()

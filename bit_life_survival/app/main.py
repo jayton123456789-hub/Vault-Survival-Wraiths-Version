@@ -4,86 +4,149 @@ import json
 import os
 from pathlib import Path
 
-import pygame
+from rich.console import Console
 
-from .intro import play_intro
-
-WINDOW_SIZE = (1280, 720)
-WINDOW_TITLE = "Bit Life Survival"
+from bit_life_survival.app.intro import play_startup_intro
+from bit_life_survival.app.screens import (
+    BaseScreen,
+    DeathScreen,
+    LoadoutScreen,
+    RunScreen,
+    create_run_state_with_loadout,
+    ensure_queue_filled,
+    reset_loadout_after_run,
+)
+from bit_life_survival.core.drone import run_drone_recovery
+from bit_life_survival.core.loader import ContentValidationError, load_content
+from bit_life_survival.core.models import EquippedSlots
+from bit_life_survival.core.persistence import load_save_data, save_save_data, store_item
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _load_settings() -> dict:
-    default_settings = {
-        "disable_intro": False,
-        "intro_use_cinematic_audio": True,
-    }
+def _return_staged_loadout_to_storage(loadout: EquippedSlots, save_data) -> None:
+    for item_id in loadout.as_values():
+        store_item(save_data.vault, item_id, 1)
 
-    settings_path = _repo_root() / "settings.json"
-    if settings_path.exists():
+
+def _apply_optional_settings_file(save_data, settings_path: Path) -> None:
+    if not settings_path.exists():
+        return
+    try:
+        payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    if not isinstance(payload, dict):
+        return
+
+    settings = save_data.vault.settings
+    if "skip_intro" in payload and isinstance(payload["skip_intro"], bool):
+        settings.skip_intro = payload["skip_intro"]
+    if "intro_use_cinematic_audio" in payload and isinstance(payload["intro_use_cinematic_audio"], bool):
+        settings.intro_use_cinematic_audio = payload["intro_use_cinematic_audio"]
+    if "seeded_mode" in payload and isinstance(payload["seeded_mode"], bool):
+        settings.seeded_mode = payload["seeded_mode"]
+    if "base_seed" in payload:
         try:
-            loaded = json.loads(settings_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                default_settings.update(loaded)
-        except json.JSONDecodeError:
-            # Invalid settings should not block startup.
+            settings.base_seed = int(payload["base_seed"])
+        except (TypeError, ValueError):
             pass
-
-    disable_env = os.getenv("BLS_DISABLE_INTRO", "").strip().lower()
-    if disable_env in {"1", "true", "yes", "on"}:
-        default_settings["disable_intro"] = True
-
-    return default_settings
-
-
-def _run_main_menu(screen: pygame.Surface, clock: pygame.time.Clock) -> None:
-    font_title = pygame.font.SysFont(None, 64)
-    font_hint = pygame.font.SysFont(None, 30)
-
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                running = False
-
-        screen.fill((12, 12, 16))
-        title = font_title.render("Bit Life Survival", True, (230, 230, 240))
-        subtitle = font_hint.render("Main menu/base shell placeholder - press ESC to quit", True, (170, 170, 185))
-        screen.blit(title, title.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2 - 24)))
-        screen.blit(subtitle, subtitle.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2 + 24)))
-        pygame.display.flip()
-        clock.tick(60)
 
 
 def main() -> None:
-    settings = _load_settings()
-    assets_dir = _repo_root() / "bit_life_survival" / "assets" / "bbwg_intro"
-
-    pygame.init()
-    pygame.mixer.init()
-    pygame.display.set_caption(WINDOW_TITLE)
-    screen = pygame.display.set_mode(WINDOW_SIZE)
-    clock = pygame.time.Clock()
+    console = Console()
+    repo_root = _repo_root()
+    content_dir = repo_root / "bit_life_survival" / "content"
+    assets_dir = repo_root / "bit_life_survival" / "assets" / "bbwg_intro"
+    save_path = repo_root / "save.json"
+    settings_path = repo_root / "settings.json"
 
     try:
-        if not settings.get("disable_intro", False):
-            play_intro(
-                screen=screen,
-                clock=clock,
-                assets_dir=assets_dir,
-                allow_skip=True,
-                enable_cinematic_audio=bool(settings.get("intro_use_cinematic_audio", True)),
-            )
+        content = load_content(content_dir)
+    except ContentValidationError as exc:
+        console.print(f"[bold red]Failed to load game content:[/bold red]\n{exc}")
+        raise SystemExit(1) from exc
 
-        _run_main_menu(screen, clock)
+    save_data = load_save_data(save_path=save_path)
+    _apply_optional_settings_file(save_data, settings_path=settings_path)
+    ensure_queue_filled(save_data.vault)
+
+    def save_now() -> None:
+        save_save_data(save_data, save_path=save_path)
+
+    save_now()
+
+    skip_intro_from_env = os.environ.get("BLS_SKIP_INTRO", "").strip().lower() in {"1", "true", "yes", "on"}
+
+    play_startup_intro(
+        assets_dir=assets_dir,
+        skip_intro=skip_intro_from_env or save_data.vault.settings.skip_intro,
+        use_cinematic_audio=save_data.vault.settings.intro_use_cinematic_audio,
+        logger=lambda line: console.print(f"[yellow]{line}[/yellow]"),
+    )
+
+    loadout = EquippedSlots()
+    death_screen = DeathScreen(console=console, content=content)
+
+    try:
+        while True:
+            base = BaseScreen(console=console, content=content, vault=save_data.vault, save_cb=save_now)
+            action = base.prompt_action(loadout)
+
+            if action in {"q", "quit", "exit"}:
+                _return_staged_loadout_to_storage(loadout, save_data)
+                loadout = EquippedSlots()
+                save_now()
+                console.print("[bold]Goodbye.[/bold]")
+                return
+
+            if action == "1":
+                base.use_the_claw()
+                continue
+            if action == "2":
+                loadout = LoadoutScreen(console=console, content=content, vault=save_data.vault, save_cb=save_now).run(loadout)
+                continue
+            if action == "4":
+                base.craft_menu()
+                continue
+            if action == "5":
+                base.settings_menu()
+                continue
+            if action == "6":
+                base.show_storage()
+                continue
+            if action != "3":
+                console.print("[red]Unknown action.[/red]")
+                continue
+
+            # Deploy
+            if save_data.vault.current_citizen is None:
+                console.print("[yellow]No drafted citizen. Use The Claw first.[/yellow]")
+                continue
+
+            run_seed = base.compute_run_seed()
+            save_data.vault.last_run_seed = run_seed
+            save_data.vault.run_counter += 1
+            save_now()
+
+            run_state = create_run_state_with_loadout(seed=run_seed, biome_id="suburbs", loadout=loadout)
+            run_screen = RunScreen(console=console, content=content, state=run_state)
+            final_state, run_logs = run_screen.run()
+
+            recovery = run_drone_recovery(save_data.vault, final_state, content)
+            save_data.vault.current_citizen = None
+            loadout = reset_loadout_after_run(save_data.vault, loadout)
+            ensure_queue_filled(save_data.vault)
+            save_now()
+
+            death_screen.show(final_state, recovery, run_logs)
     finally:
-        pygame.mixer.quit()
-        pygame.quit()
+        # Return staged loadout items if app exits unexpectedly before deploy.
+        if loadout.as_values():
+            _return_staged_loadout_to_storage(loadout, save_data)
+            save_now()
 
 
 if __name__ == "__main__":

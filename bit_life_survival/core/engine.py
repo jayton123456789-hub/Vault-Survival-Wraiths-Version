@@ -23,6 +23,8 @@ class EventOptionInstance:
     costs: list[dict[str, Any]]
     outcomes: list[dict[str, Any]]
     log_line: str
+    death_chance_hint: float
+    loot_bias: int
 
 
 @dataclass(slots=True)
@@ -57,9 +59,29 @@ def _decrement_cooldowns(state: GameState) -> None:
     state.event_cooldowns = next_cooldowns
 
 
+def _option_death_chance(option_payload: list[dict[str, Any]]) -> float:
+    chance = 0.0
+    for outcome in option_payload:
+        if "setDeathChance" in outcome:
+            chance = max(chance, float(outcome["setDeathChance"]))
+    return chance
+
+
+def _option_loot_bias(option_payload: list[dict[str, Any]]) -> int:
+    bias = 0
+    for outcome in option_payload:
+        if "lootRoll" in outcome:
+            bias += int(outcome["lootRoll"].get("rolls", 1))
+        if "addItems" in outcome:
+            bias += len(outcome["addItems"])
+    return bias
+
+
 def _instantiate_event(event: Any, state: GameState, content: ContentBundle) -> EventInstance:
     options: list[EventOptionInstance] = []
     for option in event.options:
+        death_hint = max(_option_death_chance(option.costs), _option_death_chance(option.outcomes))
+        loot_bias = _option_loot_bias(option.outcomes)
         if option.requirements is None:
             options.append(
                 EventOptionInstance(
@@ -70,6 +92,8 @@ def _instantiate_event(event: Any, state: GameState, content: ContentBundle) -> 
                     costs=option.costs,
                     outcomes=option.outcomes,
                     log_line=option.log_line,
+                    death_chance_hint=death_hint,
+                    loot_bias=loot_bias,
                 )
             )
             continue
@@ -84,39 +108,11 @@ def _instantiate_event(event: Any, state: GameState, content: ContentBundle) -> 
                 costs=option.costs,
                 outcomes=option.outcomes,
                 log_line=option.log_line,
+                death_chance_hint=death_hint,
+                loot_bias=loot_bias,
             )
         )
     return EventInstance(event_id=event.id, title=event.title, text=event.text, tags=event.tags, options=options)
-
-
-def _score_option(option: EventOptionInstance, mode: Literal["safe", "greedy"]) -> float:
-    score = 0.0
-    for outcome in [*option.costs, *option.outcomes]:
-        (op, value), = outcome.items()
-        if op == "addItems":
-            qty = sum(int(item["qty"]) for item in value)
-            score += qty * (2.0 if mode == "safe" else 4.0)
-        elif op == "removeItems":
-            qty = sum(int(item["qty"]) for item in value)
-            score -= qty * (5.0 if mode == "safe" else 2.0)
-        elif op == "metersDelta":
-            for meter_delta in value.values():
-                delta = float(meter_delta)
-                if delta >= 0:
-                    score += delta * (0.45 if mode == "safe" else 0.65)
-                else:
-                    score += delta * (1.8 if mode == "safe" else 0.8)
-        elif op == "addInjury":
-            delta = float(value)
-            score -= delta * (4.0 if mode == "safe" else 1.6)
-        elif op == "setDeathChance":
-            chance = float(value)
-            score -= chance * (900.0 if mode == "safe" else 140.0)
-        elif op == "lootRoll":
-            score += 3.0 if mode == "safe" else 8.0
-        elif op == "setFlags":
-            score += len(value) * 0.8
-    return score
 
 
 def _choose_option(
@@ -131,9 +127,22 @@ def _choose_option(
     if policy == "random":
         return unlocked[rng.next_int(0, len(unlocked))]
 
-    mode: Literal["safe", "greedy"] = "safe" if policy == "safe" else "greedy"
-    scored = sorted(unlocked, key=lambda option: _score_option(option, mode), reverse=True)
-    return scored[0]
+    if policy == "safe":
+        if any(option.death_chance_hint > 0 for option in unlocked):
+            ordered = sorted(
+                enumerate(unlocked),
+                key=lambda pair: (pair[1].death_chance_hint, pair[0]),
+            )
+            return ordered[0][1]
+        return unlocked[0]
+
+    # greedy
+    ordered = sorted(
+        enumerate(unlocked),
+        key=lambda pair: (pair[1].loot_bias, -pair[1].death_chance_hint, -pair[0]),
+        reverse=True,
+    )
+    return ordered[0][1]
 
 
 def apply_choice(
@@ -163,10 +172,21 @@ def apply_choice(
     return logs
 
 
-def step(
+def apply_choice_with_state_rng(
+    state: GameState,
+    event_instance: EventInstance,
+    option_id: str,
+    content: ContentBundle,
+) -> list[LogEntry]:
+    rng = _rng_from_state(state)
+    logs = apply_choice(state, event_instance, option_id, content, rng)
+    _sync_rng_to_state(state, rng)
+    return logs
+
+
+def advance_to_next_event(
     state: GameState,
     content: ContentBundle,
-    policy: AutopickPolicy = "safe",
 ) -> tuple[GameState, EventInstance | None, list[LogEntry]]:
     rng = _rng_from_state(state)
     logs: list[LogEntry] = []
@@ -188,7 +208,20 @@ def step(
 
     event_instance = _instantiate_event(event, state, content)
     logs.append(make_log_entry(state, "event", f"{event.title}: {event.text}"))
+    _sync_rng_to_state(state, rng)
+    return state, event_instance, logs
 
+
+def step(
+    state: GameState,
+    content: ContentBundle,
+    policy: AutopickPolicy = "safe",
+) -> tuple[GameState, EventInstance | None, list[LogEntry]]:
+    state, event_instance, logs = advance_to_next_event(state, content)
+    if event_instance is None:
+        return state, None, logs
+
+    rng = _rng_from_state(state)
     selected_option = _choose_option(policy, event_instance, rng)
     if selected_option is None:
         logs.append(make_log_entry(state, "system", "All event options are locked."))
