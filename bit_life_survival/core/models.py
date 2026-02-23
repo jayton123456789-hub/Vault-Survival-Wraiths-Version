@@ -198,6 +198,8 @@ class VaultState(StrictModel):
     milestones: set[str] = Field(default_factory=set)
     run_counter: int = 0
     last_run_seed: int | str | None = None
+    last_run_distance: float = 0.0
+    last_run_time: int = 0
     claw_rng_state: int = 1
     claw_rng_calls: int = 0
     settings: SettingsState = Field(default_factory=SettingsState)

@@ -1,6 +1,6 @@
 # Bit Life Survival
 
-Python roguelite prototype with deterministic run simulation, data-driven content, and a playable terminal vertical slice.
+Python roguelite prototype with deterministic run simulation, data-driven content, and a playable pygame window UI.
 
 ## Quickstart
 1. Create venv:
@@ -9,6 +9,9 @@ Python roguelite prototype with deterministic run simulation, data-driven conten
    - `.venv\Scripts\python -m pip install -r requirements.txt`
 3. Run game:
    - `.venv\Scripts\python -m bit_life_survival.app.main`
+
+Flow:
+- Intro -> Main Menu -> New/Load -> Base -> Loadout -> Run -> Event/Result -> Death/Retreat report
 
 ## One-Click Launcher
 - `tools\run_game.cmd`
