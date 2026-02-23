@@ -1,0 +1,524 @@
+[
+  {
+    "id": "abandoned_house_loot",
+    "title": "Abandoned House",
+    "text": "A boarded-up house still has supplies hidden under dust and broken glass.",
+    "tags": ["loot"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "cooldownSteps": 2
+    },
+    "weight": 10,
+    "options": [
+      {
+        "id": "search_carefully",
+        "label": "Search carefully",
+        "outcomes": [
+          { "metersDelta": { "stamina": -5, "morale": 2 } },
+          { "lootRoll": { "lootTableId": "suburbs_common", "rolls": 2 } }
+        ],
+        "logLine": "You methodically clear each room and collect what still works."
+      },
+      {
+        "id": "smash_and_grab",
+        "label": "Smash and grab",
+        "requirements": {
+          "hasTag": "Tool"
+        },
+        "costs": [
+          { "metersDelta": { "stamina": -8 } }
+        ],
+        "outcomes": [
+          { "lootRoll": { "lootTableId": "suburbs_common", "rolls": 3 } },
+          { "addInjury": 2 }
+        ],
+        "logLine": "You force your way through locked doors to grab more loot."
+      },
+      {
+        "id": "move_on",
+        "label": "Move on",
+        "outcomes": [
+          { "metersDelta": { "morale": -1 } }
+        ],
+        "logLine": "You skip the risk and keep moving."
+      }
+    ]
+  },
+  {
+    "id": "thirsty_choice",
+    "title": "Thirsty Decision",
+    "text": "Your tongue is dry and the only water nearby looks unsafe.",
+    "tags": ["hazard", "medical"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "cooldownSteps": 1
+    },
+    "weight": 8,
+    "options": [
+      {
+        "id": "drink_stagnant",
+        "label": "Drink anyway",
+        "outcomes": [
+          { "metersDelta": { "hydration": 18 } },
+          { "addInjury": 4 },
+          { "setFlags": ["drank_stagnant_water"] }
+        ],
+        "logLine": "You take the gamble and drink murky water."
+      },
+      {
+        "id": "use_filter",
+        "label": "Use filter mask setup",
+        "requirements": {
+          "hasTag": "Toxic"
+        },
+        "outcomes": [
+          { "metersDelta": { "hydration": 22, "morale": 1 } }
+        ],
+        "logLine": "Your filtration gear keeps the water usable."
+      },
+      {
+        "id": "ration_last_sip",
+        "label": "Ration the last sip",
+        "outcomes": [
+          { "metersDelta": { "hydration": 6, "morale": -3 } }
+        ],
+        "logLine": "You stretch what little water you have."
+      }
+    ]
+  },
+  {
+    "id": "stray_dog_social",
+    "title": "Stray Dog",
+    "text": "A wary stray follows at a distance, watching every move.",
+    "tags": ["social"],
+    "trigger": {
+      "biomeIds": ["suburbs"]
+    },
+    "weight": 6,
+    "options": [
+      {
+        "id": "befriend_dog",
+        "label": "Try to befriend it",
+        "requirements": {
+          "meterGte": { "meter": "morale", "value": 30 }
+        },
+        "outcomes": [
+          { "setFlags": ["dog_friend"] },
+          { "metersDelta": { "morale": 6 } }
+        ],
+        "logLine": "The dog relaxes and starts trailing as an ally."
+      },
+      {
+        "id": "feed_dog",
+        "label": "Offer food",
+        "requirements": {
+          "hasItem": "energy_gel"
+        },
+        "outcomes": [
+          { "removeItems": [{ "itemId": "energy_gel", "qty": 1 }] },
+          { "metersDelta": { "morale": 8 } },
+          { "setFlags": ["dog_friend"] }
+        ],
+        "logLine": "You share a ration and earn trust."
+      },
+      {
+        "id": "scare_it",
+        "label": "Scare it away",
+        "outcomes": [
+          { "metersDelta": { "morale": -2 } },
+          { "addInjury": 1 }
+        ],
+        "logLine": "The dog snaps before running off."
+      }
+    ]
+  },
+  {
+    "id": "trader_encounter",
+    "title": "Roadside Trader",
+    "text": "A scavenger trader appears with a tarp full of questionable gear.",
+    "tags": ["trade", "social"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "minDistance": 2,
+      "cooldownSteps": 3
+    },
+    "weight": 5,
+    "options": [
+      {
+        "id": "barter_fairly",
+        "label": "Barter fairly",
+        "outcomes": [
+          { "lootRoll": { "lootTableId": "trader_stock", "rolls": 1 } },
+          { "metersDelta": { "morale": 2 } }
+        ],
+        "logLine": "You make a quick deal and part on decent terms."
+      },
+      {
+        "id": "flash_badge",
+        "label": "Flash authority badge",
+        "requirements": {
+          "hasTag": "Authority"
+        },
+        "outcomes": [
+          { "lootRoll": { "lootTableId": "trader_stock", "rolls": 2 } },
+          { "setFlags": ["authority_reputation"] }
+        ],
+        "logLine": "The badge gets immediate cooperation."
+      },
+      {
+        "id": "rob_trader",
+        "label": "Take everything by force",
+        "costs": [
+          { "addInjury": 6 }
+        ],
+        "outcomes": [
+          { "lootRoll": { "lootTableId": "trader_stock", "rolls": 2 } },
+          { "metersDelta": { "morale": -8 } },
+          { "setDeathChance": 0.05 }
+        ],
+        "logLine": "You rush the trader and chaos erupts."
+      }
+    ]
+  },
+  {
+    "id": "ambush_event",
+    "title": "Street Ambush",
+    "text": "Shapes move from alleys. You're being boxed in.",
+    "tags": ["combat", "hazard"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "minDistance": 5,
+      "cooldownSteps": 2
+    },
+    "weight": 7,
+    "options": [
+      {
+        "id": "fight_back",
+        "label": "Fight back",
+        "requirements": {
+          "any": [{ "hasTag": "Combat" }, { "hasItem": "crowbar_heavy" }]
+        },
+        "outcomes": [
+          { "addInjury": 7 },
+          { "lootRoll": { "lootTableId": "ambush_spoils", "rolls": 2 } },
+          { "metersDelta": { "morale": 3 } }
+        ],
+        "logLine": "You hold your ground and seize the aftermath."
+      },
+      {
+        "id": "evade",
+        "label": "Evade through side yards",
+        "costs": [
+          { "metersDelta": { "stamina": -10 } }
+        ],
+        "outcomes": [
+          { "metersDelta": { "morale": -2 } },
+          { "setFlags": ["narrow_escape"] }
+        ],
+        "logLine": "You break line-of-sight and slip away."
+      },
+      {
+        "id": "surrender_supplies",
+        "label": "Drop supplies and retreat",
+        "outcomes": [
+          { "removeItems": [{ "itemId": "energy_gel", "qty": 1 }] },
+          { "removeItems": [{ "itemId": "canteen_dented", "qty": 1 }] },
+          { "metersDelta": { "morale": -10 } }
+        ],
+        "logLine": "You buy survival with supplies."
+      }
+    ]
+  },
+  {
+    "id": "broken_bridge_fork",
+    "title": "Broken Bridge Fork",
+    "text": "The bridge ahead is fractured. One route is fast and risky, another slow and safe.",
+    "tags": ["hazard"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "minDistance": 8,
+      "cooldownSteps": 4
+    },
+    "weight": 4,
+    "options": [
+      {
+        "id": "risky_jump",
+        "label": "Risk a jump across",
+        "costs": [
+          { "metersDelta": { "stamina": -12 } }
+        ],
+        "outcomes": [
+          { "addInjury": 5 },
+          { "setFlags": ["took_bridge_shortcut"] },
+          { "metersDelta": { "morale": 4 } }
+        ],
+        "logLine": "You leap the gap and barely stick the landing."
+      },
+      {
+        "id": "detour",
+        "label": "Take the long detour",
+        "outcomes": [
+          { "metersDelta": { "stamina": -3, "hydration": -6 } },
+          { "setFlags": ["detour_taken"] }
+        ],
+        "logLine": "You choose certainty over speed."
+      },
+      {
+        "id": "bike_crossing",
+        "label": "Use bike momentum",
+        "requirements": {
+          "hasItem": "bike_rusty"
+        },
+        "outcomes": [
+          { "metersDelta": { "stamina": -4 } },
+          { "setFlags": ["bike_crossing"] }
+        ],
+        "logLine": "You build speed and coast across the damaged span."
+      }
+    ]
+  },
+  {
+    "id": "toxic_fog_bank",
+    "title": "Toxic Fog Bank",
+    "text": "A rolling chemical fog swallows the next block.",
+    "tags": ["hazard", "medical"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "minDistance": 3
+    },
+    "weight": 5,
+    "options": [
+      {
+        "id": "push_through",
+        "label": "Push through fast",
+        "outcomes": [
+          { "addInjury": 3 },
+          { "metersDelta": { "stamina": -6 } },
+          { "setFlags": ["fog_exposure"] }
+        ],
+        "logLine": "You sprint through stinging air."
+      },
+      {
+        "id": "mask_up",
+        "label": "Mask up and advance",
+        "requirements": {
+          "hasTag": "Toxic"
+        },
+        "outcomes": [
+          { "metersDelta": { "stamina": -2 } }
+        ],
+        "logLine": "Your filter setup blunts the worst of it."
+      },
+      {
+        "id": "wait_out",
+        "label": "Wait for it to thin",
+        "outcomes": [
+          { "metersDelta": { "hydration": -5, "morale": -3 } }
+        ],
+        "logLine": "You shelter in place and lose momentum."
+      }
+    ]
+  },
+  {
+    "id": "police_checkpoint",
+    "title": "Checkpoint Remnant",
+    "text": "A former checkpoint still has barriers and supply crates nearby.",
+    "tags": ["social", "trade"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "minDistance": 4
+    },
+    "weight": 3,
+    "options": [
+      {
+        "id": "show_badge",
+        "label": "Show badge and pass",
+        "requirements": {
+          "hasTag": "Authority"
+        },
+        "outcomes": [
+          { "metersDelta": { "morale": 5 } },
+          { "lootRoll": { "lootTableId": "suburbs_medical", "rolls": 1 } }
+        ],
+        "logLine": "Your authority tag opens routes and caches."
+      },
+      {
+        "id": "sneak_around",
+        "label": "Sneak around barriers",
+        "outcomes": [
+          { "metersDelta": { "stamina": -7 } },
+          { "setDeathChance": 0.02 }
+        ],
+        "logLine": "You slip through sightlines and trip hazards."
+      },
+      {
+        "id": "turn_back",
+        "label": "Avoid the area",
+        "outcomes": [
+          { "metersDelta": { "morale": -4 } }
+        ],
+        "logLine": "You avoid risk but lose confidence."
+      }
+    ]
+  },
+  {
+    "id": "rainstorm_shelter",
+    "title": "Rainstorm",
+    "text": "Cold rain turns streets into slick channels and visibility drops.",
+    "tags": ["hazard"],
+    "trigger": {
+      "biomeIds": ["suburbs"]
+    },
+    "weight": 5,
+    "options": [
+      {
+        "id": "tarp_up",
+        "label": "Use weather gear",
+        "requirements": {
+          "hasItem": "rain_poncho"
+        },
+        "outcomes": [
+          { "metersDelta": { "hydration": 4, "morale": 2 } }
+        ],
+        "logLine": "Your poncho turns a storm into a brief rest."
+      },
+      {
+        "id": "run_for_cover",
+        "label": "Run for cover",
+        "outcomes": [
+          { "metersDelta": { "stamina": -6, "hydration": -2 } }
+        ],
+        "logLine": "You dash between doorways and keep moving."
+      },
+      {
+        "id": "keep_marching",
+        "label": "Keep marching through it",
+        "outcomes": [
+          { "metersDelta": { "hydration": -8, "morale": -3 } }
+        ],
+        "logLine": "You ignore the weather and pay for it."
+      }
+    ]
+  },
+  {
+    "id": "clinic_ruins",
+    "title": "Clinic Ruins",
+    "text": "A looted clinic still has sealed cabinets and old treatment rooms.",
+    "tags": ["loot", "medical"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "requiredFlagsAll": ["fog_exposure"]
+    },
+    "weight": 4,
+    "options": [
+      {
+        "id": "scavenge_supplies",
+        "label": "Scavenge cabinets",
+        "outcomes": [
+          { "lootRoll": { "lootTableId": "suburbs_medical", "rolls": 2 } },
+          { "metersDelta": { "stamina": -4 } }
+        ],
+        "logLine": "You pry open what remains and gather treatment stock."
+      },
+      {
+        "id": "self_treat",
+        "label": "Use medkit now",
+        "requirements": {
+          "hasTag": "Medical"
+        },
+        "outcomes": [
+          { "removeItems": [{ "itemId": "medkit_small", "qty": 1 }] },
+          { "addInjury": -10 },
+          { "metersDelta": { "morale": 6 } },
+          { "unsetFlags": ["fog_exposure"] }
+        ],
+        "logLine": "You treat exposure symptoms and stabilize."
+      },
+      {
+        "id": "leave_clinic",
+        "label": "Do not linger",
+        "outcomes": [
+          { "metersDelta": { "morale": -2 } }
+        ],
+        "logLine": "You decide not to spend time here."
+      }
+    ]
+  },
+  {
+    "id": "radio_signal",
+    "title": "Weak Radio Signal",
+    "text": "A repeating message loops on a nearby frequency.",
+    "tags": ["social", "trade"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "minDistance": 10
+    },
+    "weight": 3,
+    "options": [
+      {
+        "id": "answer_call",
+        "label": "Answer the call",
+        "requirements": {
+          "hasItem": "radio_crank"
+        },
+        "outcomes": [
+          { "setFlags": ["radio_contact"] },
+          { "metersDelta": { "morale": 4 } }
+        ],
+        "logLine": "You establish contact with a passing convoy."
+      },
+      {
+        "id": "stay_dark",
+        "label": "Stay radio silent",
+        "outcomes": [
+          { "metersDelta": { "morale": 1 } }
+        ],
+        "logLine": "You remain hidden and continue alone."
+      }
+    ]
+  },
+  {
+    "id": "friendly_convoy",
+    "title": "Friendly Convoy",
+    "text": "A convoy you contacted earlier rolls past and slows beside you.",
+    "tags": ["social", "loot"],
+    "trigger": {
+      "biomeIds": ["suburbs"],
+      "requiredFlagsAll": ["radio_contact"],
+      "minDistance": 12,
+      "cooldownSteps": 5
+    },
+    "weight": 2,
+    "options": [
+      {
+        "id": "ask_for_supplies",
+        "label": "Ask for supplies",
+        "outcomes": [
+          { "lootRoll": { "lootTableId": "suburbs_common", "rolls": 2 } },
+          { "metersDelta": { "morale": 3 } }
+        ],
+        "logLine": "They toss you sealed food and spare parts."
+      },
+      {
+        "id": "ask_for_passage",
+        "label": "Ask for escort",
+        "requirements": {
+          "flag": "authority_reputation"
+        },
+        "outcomes": [
+          { "metersDelta": { "stamina": 8, "morale": 5 } },
+          { "setFlags": ["convoy_escort"] }
+        ],
+        "logLine": "Your reputation earns a short protected ride."
+      },
+      {
+        "id": "decline_and_split",
+        "label": "Decline and split",
+        "outcomes": [
+          { "metersDelta": { "morale": -1 } }
+        ],
+        "logLine": "You keep your route independent."
+      }
+    ]
+  }
+]

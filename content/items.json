@@ -1,0 +1,166 @@
+[
+  {
+    "id": "backpack_basic",
+    "name": "Basic Backpack",
+    "slot": "pack",
+    "tags": ["Storage"],
+    "rarity": "common",
+    "modifiers": {
+      "carry": 15
+    },
+    "durability": {
+      "max": 100
+    },
+    "value": 15
+  },
+  {
+    "id": "armor_scrap",
+    "name": "Scrap Plate Vest",
+    "slot": "armor",
+    "tags": ["Armor", "Combat"],
+    "rarity": "uncommon",
+    "modifiers": {
+      "injuryResist": 0.12,
+      "noise": 0.05
+    },
+    "durability": {
+      "max": 85
+    },
+    "value": 30
+  },
+  {
+    "id": "bike_rusty",
+    "name": "Rusty Bike",
+    "slot": "vehicle",
+    "tags": ["Vehicle"],
+    "rarity": "uncommon",
+    "modifiers": {
+      "speed": 0.4,
+      "noise": 0.3,
+      "staminaDrainMul": 0.9
+    },
+    "durability": {
+      "max": 120
+    },
+    "value": 45
+  },
+  {
+    "id": "badge_police",
+    "name": "Police Badge",
+    "slot": "faction",
+    "tags": ["Authority"],
+    "rarity": "rare",
+    "modifiers": {
+      "moraleMul": 0.95
+    },
+    "value": 80
+  },
+  {
+    "id": "medkit_small",
+    "name": "Small Medkit",
+    "slot": "utility",
+    "tags": ["Medical", "Consumable"],
+    "rarity": "uncommon",
+    "modifiers": {
+      "carry": 2
+    },
+    "value": 40
+  },
+  {
+    "id": "filter_mask",
+    "name": "Filter Mask",
+    "slot": "utility",
+    "tags": ["Toxic", "Safety"],
+    "rarity": "rare",
+    "modifiers": {
+      "hydrationDrainMul": 0.95,
+      "staminaDrainMul": 0.96
+    },
+    "durability": {
+      "max": 70
+    },
+    "value": 55
+  },
+  {
+    "id": "canteen_dented",
+    "name": "Dented Canteen",
+    "slot": "pack",
+    "tags": ["Water"],
+    "rarity": "common",
+    "modifiers": {
+      "hydrationDrainMul": 0.9,
+      "carry": 5
+    },
+    "durability": {
+      "max": 95
+    },
+    "value": 20
+  },
+  {
+    "id": "lucky_charm",
+    "name": "Lucky Charm",
+    "slot": "utility",
+    "tags": ["Social", "Luck"],
+    "rarity": "uncommon",
+    "modifiers": {
+      "moraleMul": 0.9
+    },
+    "value": 35
+  },
+  {
+    "id": "crowbar_heavy",
+    "name": "Heavy Crowbar",
+    "slot": "utility",
+    "tags": ["Tool", "Combat"],
+    "rarity": "common",
+    "modifiers": {
+      "speed": -0.05,
+      "injuryResist": 0.03,
+      "noise": 0.1
+    },
+    "durability": {
+      "max": 110
+    },
+    "value": 18
+  },
+  {
+    "id": "rain_poncho",
+    "name": "Rain Poncho",
+    "slot": "armor",
+    "tags": ["Weather"],
+    "rarity": "common",
+    "modifiers": {
+      "hydrationDrainMul": 0.92
+    },
+    "durability": {
+      "max": 75
+    },
+    "value": 22
+  },
+  {
+    "id": "energy_gel",
+    "name": "Energy Gel Pack",
+    "slot": "utility",
+    "tags": ["Food", "Stamina"],
+    "rarity": "common",
+    "modifiers": {
+      "staminaDrainMul": 0.88
+    },
+    "value": 12
+  },
+  {
+    "id": "radio_crank",
+    "name": "Crank Radio",
+    "slot": "utility",
+    "tags": ["Signal", "Trade"],
+    "rarity": "rare",
+    "modifiers": {
+      "moraleMul": 0.96,
+      "noise": 0.05
+    },
+    "durability": {
+      "max": 90
+    },
+    "value": 48
+  }
+]
