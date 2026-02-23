@@ -1,56 +1,45 @@
-# Phase 0 Foundation
+# Phase 0 Foundation (Python)
+
+## Scope
+Phase 0 implements engine/core foundations only:
+- Data-driven content in JSON
+- Deterministic run simulation
+- Validation + reference resolution
+- Headless CLI simulator
+- Unit tests for determinism, validation, and smoke execution
 
 ## Pipeline
-1. `tools/simulate.ts` loads JSON content from `/content`.
-2. `core/src/content/loader.ts` validates shape with Zod schemas and resolves references.
-3. Deterministic sim loop (`core/src/sim/engine.ts`) runs:
+1. `bit_life_survival/core/loader.py` loads JSON files from `bit_life_survival/content`.
+2. Pydantic validates schema shape for items, events, biomes, and loot tables.
+3. Reference resolution validates IDs (`itemId`, `lootTableId`, `biomeIds`, etc.) with clear failures.
+4. Simulation engine (`core/engine.py`) runs step loop:
    - decrement cooldowns
-   - travel and meter drain
-   - event filter + weighted deterministic selection
-   - option lock evaluation (requirements)
-   - autopick choice (`safe`, `random`, `greedy`)
-   - costs then outcomes
-4. Timeline logs are generated for every state transition and printed by CLI.
+   - travel drain/update (`core/travel.py`)
+   - event selection (`core/selector.py`)
+   - requirements locking (`core/requirements.py`)
+   - autopick choice (`safe|random|greedy`)
+   - costs/outcomes (`core/outcomes.py`)
 
 ## Determinism Rules
-- RNG is seeded from `seed` and advanced only through `nextFloat`, `nextInt`, and weighted picks.
-- All weighted/event/item selection uses deterministic iteration order from content arrays.
-- No wall-clock time, random global state, or non-deterministic APIs are used.
-- Same content + seed + policy + step count yields the same timeline and final state.
+- RNG uses internal xorshift state from a seed hash (`core/rng.py`), not Python global randomness.
+- All weighted picks and integer draws come from that deterministic RNG state.
+- Same content + seed + autopick policy + step count produces identical logs and final state.
+- Signature hashing in CLI uses canonical sorted payload data.
 
-## Schema Surface (Short)
-- `items.json`: item definitions with slots, tags, rarity, modifiers, optional durability/value.
-- `loottables.json`: weighted entries, optional guaranteed entries, default roll count.
-- `biomes.json`: per-meter drain multipliers, optional event tag multipliers, referenced loot tables.
-- `events.json`: trigger conditions, weighted selection, option requirements, costs, and outcomes.
-- Requirements support boolean composition (`all/any/not`) and leaf checks (`hasTag`, `hasItem`, `flag`, meter/injury/distance checks).
-- Outcomes support item add/remove, flag set/unset, meter delta, injury delta, death chance, and loot rolls.
+## Data Model Summary
+- `Item`: slot/tags/rarity/modifiers/durability/value
+- `LootTable`: weighted entries + guaranteed rolls
+- `Biome`: meter drain multipliers + event tag multipliers
+- `Event`: trigger filters + weighted options with requirements/costs/outcomes
+- `GameState`: runner meters, injury, flags, inventory, equipment, cooldowns, RNG state
+- `VaultState`: storage, blueprints, upgrades, tav, vault level, citizen queue
 
-## Requirement Behavior Notes
-- `hasItem` checks both inventory and equipped slots.
-- `hasTag` checks tags on currently owned items (inventory + equipped).
-
-## CLI
-Run headless simulation:
-
+## Run CLI
 ```bash
-pnpm sim --seed 42 --steps 30 --biome suburbs --autopick safe
+python -m bit_life_survival.tools.simulate --seed 123 --steps 50 --biome suburbs --autopick safe
 ```
 
-Arguments:
-- `--seed <n|string>`
-- `--steps <n>`
-- `--biome <id>`
-- `--autopick <safe|random|greedy>`
-
-## Tests
-Run test suite:
-
+## Run Tests
 ```bash
-pnpm test
+pytest bit_life_survival/tests
 ```
-
-Included tests:
-- determinism (`core/tests/determinism.test.ts`)
-- content validation failures (`core/tests/validation.test.ts`)
-- 30-step smoke run (`core/tests/sim_smoke.test.ts`)
