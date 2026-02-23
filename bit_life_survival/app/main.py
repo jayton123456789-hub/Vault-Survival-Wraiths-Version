@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -55,17 +56,43 @@ def _apply_optional_settings_file(save_data, settings_path: Path) -> None:
             pass
 
 
+def _configure_logging(repo_root: Path) -> tuple[logging.Logger, Path]:
+    logs_dir = repo_root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "latest.log"
+
+    logger = logging.getLogger("bit_life_survival")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+    return logger, log_path
+
+
 def main() -> None:
     console = Console()
     repo_root = _repo_root()
+    logger, log_path = _configure_logging(repo_root)
     content_dir = repo_root / "bit_life_survival" / "content"
     assets_dir = repo_root / "bit_life_survival" / "assets" / "bbwg_intro"
     save_path = repo_root / "save.json"
     settings_path = repo_root / "settings.json"
 
+    console.print("[bold]Starting Bit Life Survival...[/bold]")
+    logger.info("Starting Bit Life Survival.")
+
     try:
         content = load_content(content_dir)
     except ContentValidationError as exc:
+        logger.exception("Failed to load content.")
         console.print(f"[bold red]Failed to load game content:[/bold red]\n{exc}")
         raise SystemExit(1) from exc
 
@@ -84,8 +111,15 @@ def main() -> None:
         assets_dir=assets_dir,
         skip_intro=skip_intro_from_env or save_data.vault.settings.skip_intro,
         use_cinematic_audio=save_data.vault.settings.intro_use_cinematic_audio,
-        logger=lambda line: console.print(f"[yellow]{line}[/yellow]"),
+        logger=lambda line: logger.warning(line),
     )
+    # Ensure pygame resources are closed before terminal gameplay begins.
+    try:
+        import pygame
+
+        pygame.quit()
+    except Exception:
+        pass
 
     loadout = EquippedSlots()
     death_screen = DeathScreen(console=console, content=content)
@@ -100,6 +134,7 @@ def main() -> None:
                 loadout = EquippedSlots()
                 save_now()
                 console.print("[bold]Goodbye.[/bold]")
+                logger.info("Exited from base screen.")
                 return
 
             if action == "1":
@@ -117,6 +152,9 @@ def main() -> None:
             if action == "6":
                 base.show_storage()
                 continue
+            if action in {"h", "help"}:
+                base.show_help()
+                continue
             if action != "3":
                 console.print("[red]Unknown action.[/red]")
                 continue
@@ -132,8 +170,18 @@ def main() -> None:
             save_now()
 
             run_state = create_run_state_with_loadout(seed=run_seed, biome_id="suburbs", loadout=loadout)
-            run_screen = RunScreen(console=console, content=content, state=run_state)
-            final_state, run_logs = run_screen.run()
+            show_first_help = not save_data.vault.settings.seen_run_help
+            run_screen = RunScreen(
+                console=console,
+                content=content,
+                state=run_state,
+                show_first_help=show_first_help,
+            )
+            if show_first_help:
+                save_data.vault.settings.seen_run_help = True
+                save_now()
+
+            final_state, run_logs, run_exit = run_screen.run()
 
             recovery = run_drone_recovery(save_data.vault, final_state, content)
             save_data.vault.current_citizen = None
@@ -141,7 +189,16 @@ def main() -> None:
             ensure_queue_filled(save_data.vault)
             save_now()
 
+            if run_exit == "quit":
+                console.print("[bold]Quit requested. Run recovery applied. Exiting to desktop.[/bold]")
+                logger.info("Exited from run screen via quit command.")
+                return
+
             death_screen.show(final_state, recovery, run_logs)
+    except Exception:
+        logger.exception("Unhandled exception in game loop.")
+        console.print(f"[bold red]A fatal error occurred.[/bold red] See {log_path}")
+        raise SystemExit(1)
     finally:
         # Return staged loadout items if app exits unexpectedly before deploy.
         if loadout.as_values():

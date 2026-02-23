@@ -43,6 +43,7 @@ def _state_signature_payload(state, logs) -> dict:
         "equipped": state.equipped.model_dump(mode="python"),
         "dead": state.dead,
         "death_reason": state.death_reason,
+        "last_event_id": state.last_event_id,
         "event_cooldowns": dict(sorted(state.event_cooldowns.items())),
         "rng_state": state.rng_state,
         "rng_calls": state.rng_calls,

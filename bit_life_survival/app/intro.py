@@ -15,6 +15,8 @@ HOLD_PHASE_END = 4.5
 
 WHOOSH_DELAY = 2.0
 CINEMATIC_DELAY = 2.15
+RED_OVERLAY_ALPHA_SHAKE = 40
+RED_OVERLAY_ALPHA_POST = 8
 
 
 def _load_required_assets(assets_dir: Path) -> tuple[pygame.Surface, pygame.Surface, pygame.mixer.Sound, pygame.mixer.Sound | None]:
@@ -96,6 +98,7 @@ def play_intro(
                 skipped = True
                 return skipped
 
+        # Always clear full frame first so overlays cannot persist between frames.
         screen.fill((0, 0, 0))
 
         if elapsed < BLACK_SCREEN_END:
@@ -119,7 +122,7 @@ def play_intro(
                 shake_mag = max(0.0, 4.0 * (1.0 - impact_progress))
                 shake_x = int(math.sin(elapsed * 130.0) * shake_mag)
                 shake_y = int(math.cos(elapsed * 115.0) * shake_mag)
-                glow_alpha = int(100 * (1.0 - impact_progress) + 30)
+                glow_alpha = int(RED_OVERLAY_ALPHA_SHAKE * (1.0 - impact_progress) + RED_OVERLAY_ALPHA_POST)
                 _draw_logo_centered(
                     screen,
                     frame2,
@@ -137,11 +140,11 @@ def play_intro(
             elif elapsed < HOLD_PHASE_END:
                 hold_progress = elapsed - IMPACT_PHASE_END
                 breathe_scale = 1.0 + 0.006 * math.sin(hold_progress * 2.4)
-                glow_alpha = int(18 + 10 * (1.0 + math.sin(hold_progress * 2.2)) * 0.5)
+                glow_alpha = int(RED_OVERLAY_ALPHA_POST + 4 * (1.0 + math.sin(hold_progress * 2.2)) * 0.5)
                 _draw_logo_centered(screen, frame2, scale=breathe_scale, red_glow_alpha=glow_alpha)
             else:
                 # 4.5s -> 6.0s: smooth fade out to black.
-                _draw_logo_centered(screen, frame2, scale=1.0, red_glow_alpha=12)
+                _draw_logo_centered(screen, frame2, scale=1.0, red_glow_alpha=RED_OVERLAY_ALPHA_POST)
                 fade_progress = (elapsed - HOLD_PHASE_END) / (INTRO_TOTAL_SECONDS - HOLD_PHASE_END)
                 fade_overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
                 fade_overlay.fill((0, 0, 0, int(max(0, min(255, fade_progress * 255)))))

@@ -5,13 +5,14 @@ from typing import Any, Literal
 
 from .loader import ContentBundle
 from .models import GameState, LogEntry, make_log_entry
-from .outcomes import apply_outcomes
+from .outcomes import OutcomeReport, apply_outcomes
 from .requirements import evaluate_requirement
 from .rng import DeterministicRNG
 from .selector import select_event
 from .travel import advance_travel
 
 AutopickPolicy = Literal["safe", "random", "greedy"]
+DEFAULT_EVENT_COOLDOWN_STEPS = 1
 
 
 @dataclass(slots=True)
@@ -20,6 +21,7 @@ class EventOptionInstance:
     label: str
     locked: bool
     lock_reasons: list[str]
+    requirements: dict[str, Any] | None
     costs: list[dict[str, Any]]
     outcomes: list[dict[str, Any]]
     log_line: str
@@ -34,6 +36,12 @@ class EventInstance:
     text: str
     tags: list[str]
     options: list[EventOptionInstance]
+
+
+@dataclass(slots=True)
+class ChoiceResolution:
+    logs: list[LogEntry]
+    report: OutcomeReport
 
 
 def _rng_from_state(state: GameState) -> DeterministicRNG:
@@ -89,6 +97,7 @@ def _instantiate_event(event: Any, state: GameState, content: ContentBundle) -> 
                     label=option.label,
                     locked=False,
                     lock_reasons=[],
+                    requirements=option.requirements,
                     costs=option.costs,
                     outcomes=option.outcomes,
                     log_line=option.log_line,
@@ -105,6 +114,7 @@ def _instantiate_event(event: Any, state: GameState, content: ContentBundle) -> 
                 label=option.label,
                 locked=not ok,
                 lock_reasons=reasons,
+                requirements=option.requirements,
                 costs=option.costs,
                 outcomes=option.outcomes,
                 log_line=option.log_line,
@@ -145,6 +155,48 @@ def _choose_option(
     return ordered[0][1]
 
 
+def apply_choice_detailed(
+    state: GameState,
+    event_instance: EventInstance,
+    option_id: str,
+    content: ContentBundle,
+    rng: DeterministicRNG,
+) -> ChoiceResolution:
+    option = next((option for option in event_instance.options if option.id == option_id), None)
+    if option is None:
+        raise ValueError(f"Option '{option_id}' not found on event '{event_instance.event_id}'.")
+    if option.locked:
+        return ChoiceResolution(
+            logs=[
+                make_log_entry(
+                    state,
+                    "system",
+                    f"Choice '{option.label}' is locked: {'; '.join(option.lock_reasons) or 'unknown reason'}",
+                )
+            ],
+            report=OutcomeReport(),
+        )
+
+    logs: list[LogEntry] = [
+        make_log_entry(
+            state,
+            "choice",
+            option.log_line,
+            data={"eventId": event_instance.event_id, "optionId": option.id},
+        )
+    ]
+    report = OutcomeReport()
+    if option.costs:
+        cost_logs, cost_report = apply_outcomes(state, option.costs, content, rng)
+        logs.extend(cost_logs)
+        report.merge(cost_report)
+    if not state.dead:
+        outcome_logs, outcome_report = apply_outcomes(state, option.outcomes, content, rng)
+        logs.extend(outcome_logs)
+        report.merge(outcome_report)
+    return ChoiceResolution(logs=logs, report=report)
+
+
 def apply_choice(
     state: GameState,
     event_instance: EventInstance,
@@ -152,24 +204,7 @@ def apply_choice(
     content: ContentBundle,
     rng: DeterministicRNG,
 ) -> list[LogEntry]:
-    option = next((option for option in event_instance.options if option.id == option_id), None)
-    if option is None:
-        raise ValueError(f"Option '{option_id}' not found on event '{event_instance.event_id}'.")
-    if option.locked:
-        return [
-            make_log_entry(
-                state,
-                "system",
-                f"Choice '{option.label}' is locked: {'; '.join(option.lock_reasons) or 'unknown reason'}",
-            )
-        ]
-
-    logs: list[LogEntry] = [make_log_entry(state, "choice", option.log_line)]
-    if option.costs:
-        logs.extend(apply_outcomes(state, option.costs, content, rng))
-    if not state.dead:
-        logs.extend(apply_outcomes(state, option.outcomes, content, rng))
-    return logs
+    return apply_choice_detailed(state, event_instance, option_id, content, rng).logs
 
 
 def apply_choice_with_state_rng(
@@ -182,6 +217,18 @@ def apply_choice_with_state_rng(
     logs = apply_choice(state, event_instance, option_id, content, rng)
     _sync_rng_to_state(state, rng)
     return logs
+
+
+def apply_choice_with_state_rng_detailed(
+    state: GameState,
+    event_instance: EventInstance,
+    option_id: str,
+    content: ContentBundle,
+) -> ChoiceResolution:
+    rng = _rng_from_state(state)
+    resolution = apply_choice_detailed(state, event_instance, option_id, content, rng)
+    _sync_rng_to_state(state, rng)
+    return resolution
 
 
 def advance_to_next_event(
@@ -203,11 +250,16 @@ def advance_to_next_event(
         _sync_rng_to_state(state, rng)
         return state, None, logs
 
-    if event.trigger.cooldown_steps and event.trigger.cooldown_steps > 0:
-        state.event_cooldowns[event.id] = event.trigger.cooldown_steps
+    cooldown_steps = event.trigger.cooldown_steps
+    if cooldown_steps is None:
+        cooldown_steps = DEFAULT_EVENT_COOLDOWN_STEPS
+    if cooldown_steps > 0:
+        state.event_cooldowns[event.id] = cooldown_steps
+
+    state.last_event_id = event.id
 
     event_instance = _instantiate_event(event, state, content)
-    logs.append(make_log_entry(state, "event", f"{event.title}: {event.text}"))
+    logs.append(make_log_entry(state, "event", f"{event.title}: {event.text}", data={"eventId": event.id}))
     _sync_rng_to_state(state, rng)
     return state, event_instance, logs
 

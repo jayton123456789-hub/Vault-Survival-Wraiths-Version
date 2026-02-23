@@ -33,7 +33,7 @@ def _effective_weight(event: Event, state: GameState, content: ContentBundle) ->
     return max(0.0, weight)
 
 
-def select_event(state: GameState, content: ContentBundle, rng: DeterministicRNG) -> Event | None:
+def _build_candidates(state: GameState, content: ContentBundle) -> list[WeightedEntry[Event]]:
     candidates = []
     for event in content.events:
         if not _passes_trigger(event, state):
@@ -42,7 +42,19 @@ def select_event(state: GameState, content: ContentBundle, rng: DeterministicRNG
         if weight <= 0:
             continue
         candidates.append(WeightedEntry(value=event, weight=weight))
+    return candidates
+
+
+def select_event(state: GameState, content: ContentBundle, rng: DeterministicRNG) -> Event | None:
+    candidates = _build_candidates(state, content)
 
     if not candidates:
         return None
+
+    # Anti-repeat safety: avoid selecting the same event consecutively when alternatives exist.
+    if state.last_event_id:
+        alternatives = [entry for entry in candidates if entry.value.id != state.last_event_id]
+        if alternatives:
+            candidates = alternatives
+
     return rng.pick_weighted(candidates)

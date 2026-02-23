@@ -11,5 +11,6 @@ def test_smoke_run_thirty_steps_without_crash():
     initial = create_initial_state(9991, "suburbs")
     final_state, timeline = run_simulation(initial, content, steps=30, policy="safe")
 
+    assert final_state.step <= 30
     assert final_state.step > 0
     assert len(timeline) > 0

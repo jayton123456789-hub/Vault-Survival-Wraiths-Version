@@ -2,20 +2,58 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Literal
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from bit_life_survival.app.widgets import inventory_widget, loadout_summary_widget, log_widget, meters_widget
 from bit_life_survival.core.drone import DroneRecoveryReport
-from bit_life_survival.core.engine import EventInstance, advance_to_next_event, apply_choice_with_state_rng, create_initial_state
+from bit_life_survival.core.engine import (
+    EventInstance,
+    EventOptionInstance,
+    advance_to_next_event,
+    apply_choice_with_state_rng_detailed,
+    create_initial_state,
+)
 from bit_life_survival.core.loader import ContentBundle
 from bit_life_survival.core.models import EquippedSlots, GameState, LogEntry, VaultState, make_log_entry
+from bit_life_survival.core.outcomes import OutcomeReport
 from bit_life_survival.core.persistence import draft_citizen_from_claw, refill_citizen_queue, store_item, take_item
+from bit_life_survival.core.travel import compute_loadout_summary
 
 SaveCallback = Callable[[], None]
+RunExit = Literal["completed", "retreat", "quit"]
+MAX_INPUT_RETRIES = 5
+BASE_CARRY_CAPACITY = 8
+
+
+HELP_LINES = [
+    "Continue Until Next Event runs travel + drains meters, then resolves one event.",
+    "Meters: stamina and hydration dropping to 0 is fatal; high injury is fatal.",
+    "Gear grants tags; tags unlock better event options and outcomes.",
+    "Death is expected in this roguelite loop; drone recovery returns part of your haul.",
+    "Controls: C continue, L full log, R retreat to base, Q quit desktop, H help.",
+]
+
+
+def show_help_screen(console: Console, context: str) -> None:
+    table = Table.grid(expand=True)
+    table.add_column()
+    table.add_row(f"[bold]Help - {context}[/bold]")
+    for line in HELP_LINES:
+        table.add_row(f"- {line}")
+    console.print(Panel(table, title="Help", border_style="blue"))
+    Prompt.ask("Press Enter to continue", default="")
+
+
+def apply_retreat(state: GameState, reason: str = "Retreated to base") -> LogEntry:
+    state.dead = True
+    state.death_reason = reason
+    state.death_flags.add("retreated_early")
+    return make_log_entry(state, "system", f"{reason} (drone recovery penalty applied).")
 
 
 @dataclass(slots=True)
@@ -86,20 +124,17 @@ class BaseScreen:
         return table
 
     def show_storage(self) -> None:
-        slot_filter = Prompt.ask(
-            "Filter slot (blank for all)",
-            default="",
-        ).strip()
-        rarity_filter = Prompt.ask(
-            "Filter rarity (blank for all)",
-            default="",
-        ).strip()
+        slot_filter = Prompt.ask("Filter slot (blank for all)", default="").strip()
+        rarity_filter = Prompt.ask("Filter rarity (blank for all)", default="").strip()
         self.console.print(
             self._storage_table(
                 slot_filter=slot_filter if slot_filter else None,
                 rarity_filter=rarity_filter if rarity_filter else None,
             )
         )
+
+    def show_help(self) -> None:
+        show_help_screen(self.console, "Base")
 
     def use_the_claw(self) -> None:
         drafted = draft_citizen_from_claw(self.vault, preview_count=5)
@@ -165,9 +200,7 @@ class BaseScreen:
         for item_id, qty in recipe.inputs.items():
             take_item(self.vault, item_id, qty)
         store_item(self.vault, recipe.output_item, recipe.output_qty)
-        self.console.print(
-            f"[bold green]Crafted[/bold green] {recipe.output_qty}x {recipe.output_item}."
-        )
+        self.console.print(f"[bold green]Crafted[/bold green] {recipe.output_qty}x {recipe.output_item}.")
         self.save_cb()
 
     def compute_run_seed(self) -> int:
@@ -182,7 +215,8 @@ class BaseScreen:
         self.console.print(self._storage_table())
         self.console.print(
             "\n[bold]Actions:[/bold] "
-            "[1] Use The Claw  [2] Loadout  [3] Deploy  [4] Craft  [5] Settings  [6] Storage Filter  [Q] Quit"
+            "[1] Use The Claw  [2] Loadout  [3] Deploy  [4] Craft  [5] Settings  "
+            "[6] Storage Filter  [H] Help  [Q] Quit"
         )
         return Prompt.ask("Select action", default="1").strip().lower()
 
@@ -268,32 +302,79 @@ class LoadoutScreen:
         self.save_cb()
 
     def run(self, loadout: EquippedSlots) -> EquippedSlots:
+        invalid_count = 0
         while True:
             self.console.rule("[bold cyan]Loadout[/bold cyan]")
             self.console.print(loadout_summary_widget(loadout, self.content))
             self.console.print(
                 "[1] pack  [2] armor  [3] vehicle  [4] utility1  [5] utility2  [6] faction  "
-                "[c] clear slot  [b] back"
+                "[C] clear slot  [H] help  [B] back"
             )
             action = Prompt.ask("Select slot/action", default="b").strip().lower()
-            if action == "b":
+
+            if not action or action == "b":
                 return loadout
+            if action == "h":
+                show_help_screen(self.console, "Loadout")
+                invalid_count = 0
+                continue
             if action == "c":
                 slot = Prompt.ask("Which slot to clear?", choices=list(self.SLOT_CHOICES.values()), default="utility1")
                 self._clear_slot(loadout, slot)
+                invalid_count = 0
                 continue
             if action in self.SLOT_CHOICES:
                 self._equip_slot(loadout, self.SLOT_CHOICES[action])
+                invalid_count = 0
                 continue
+
+            invalid_count += 1
             self.console.print("[red]Unknown action.[/red]")
+            if invalid_count >= MAX_INPUT_RETRIES:
+                self.console.print("[yellow]Too many invalid inputs. Returning to base.[/yellow]")
+                return loadout
+
+
+def _collect_requirement_tags(expr: dict | None) -> set[str]:
+    if not expr or not isinstance(expr, dict):
+        return set()
+    if "hasTag" in expr:
+        return {str(expr["hasTag"])}
+    if "all" in expr:
+        tags: set[str] = set()
+        for child in expr["all"]:
+            tags.update(_collect_requirement_tags(child))
+        return tags
+    if "any" in expr:
+        tags = set()
+        for child in expr["any"]:
+            tags.update(_collect_requirement_tags(child))
+        return tags
+    if "not" in expr:
+        return _collect_requirement_tags(expr["not"])
+    return set()
 
 
 class RunScreen:
-    def __init__(self, console: Console, content: ContentBundle, state: GameState) -> None:
+    def __init__(
+        self,
+        console: Console,
+        content: ContentBundle,
+        state: GameState,
+        show_first_help: bool = False,
+    ) -> None:
         self.console = console
         self.content = content
         self.state = state
         self.logs: list[LogEntry] = []
+        self.show_first_help = show_first_help
+
+    def _carry_stats(self) -> tuple[int, int]:
+        loadout = compute_loadout_summary(self.state, self.content)
+        carry_bonus = max(0.0, float(loadout.get("carry_bonus", 0.0)))
+        capacity = BASE_CARRY_CAPACITY + max(0, int(round(carry_bonus)))
+        used = sum(max(0, int(qty)) for qty in self.state.inventory.values())
+        return used, max(1, capacity)
 
     def _render_hud(self) -> None:
         self.console.rule("[bold red]Run[/bold red]")
@@ -302,59 +383,196 @@ class RunScreen:
             f"Time: [bold]{self.state.time}[/bold] | "
             f"Biome: [bold]{self.state.biome_id}[/bold]"
         )
+        carry_used, carry_capacity = self._carry_stats()
+        carry_warning = " [bold red](OVER CAPACITY)[/bold red]" if carry_used > carry_capacity else ""
+        self.console.print(f"Carry: [bold]{carry_used}/{carry_capacity}[/bold]{carry_warning}")
         self.console.print(meters_widget(self.state))
         self.console.print(inventory_widget(self.state.inventory, self.content, title="Run Inventory"))
         self.console.print(loadout_summary_widget(self.state.equipped, self.content))
         self.console.print(log_widget(self.logs))
+        self.console.print("[dim]Controls: [C] Continue  [L] Full Log  [R] Retreat  [Q] Quit Desktop  [H] Help[/dim]")
+
+    def _extract_travel_delta(self, step_logs: list[LogEntry]) -> dict[str, float]:
+        for entry in step_logs:
+            if entry.type != "travel":
+                continue
+            data = entry.data or {}
+            meters = data.get("metersDelta")
+            if isinstance(meters, dict):
+                return {
+                    "stamina": float(meters.get("stamina", 0.0)),
+                    "hydration": float(meters.get("hydration", 0.0)),
+                    "morale": float(meters.get("morale", 0.0)),
+                }
+        return {"stamina": 0.0, "hydration": 0.0, "morale": 0.0}
+
+    def _special_notes(self, option: EventOptionInstance, report: OutcomeReport) -> list[str]:
+        notes = list(report.notes)
+        req_tags = _collect_requirement_tags(option.requirements)
+        if req_tags:
+            notes.append("Tag unlocks used: " + ", ".join(sorted(req_tags)) + ".")
+        if option.death_chance_hint > 0:
+            notes.append("High-risk option selected.")
+        return notes
+
+    def _show_result_panel(
+        self,
+        event_instance: EventInstance,
+        selected_option: EventOptionInstance,
+        travel_delta: dict[str, float],
+        report: OutcomeReport,
+    ) -> None:
+        table = Table.grid(expand=True)
+        table.add_column(style="bold cyan")
+        table.add_column()
+
+        table.add_row(
+            "Narrative",
+            (
+                f"{selected_option.log_line}\n"
+                f"From event '{event_instance.title}', your choice '{selected_option.label}' resolved."
+            ),
+        )
+        table.add_row(
+            "Travel Delta",
+            (
+                f"stamina {travel_delta['stamina']:+.2f}, "
+                f"hydration {travel_delta['hydration']:+.2f}, "
+                f"morale {travel_delta['morale']:+.2f}"
+            ),
+        )
+        table.add_row(
+            "Event Delta",
+            (
+                f"stamina {report.meters_delta['stamina']:+.2f}, "
+                f"hydration {report.meters_delta['hydration']:+.2f}, "
+                f"morale {report.meters_delta['morale']:+.2f}"
+            ),
+        )
+        table.add_row(
+            "Injury Delta",
+            f"effective {report.injury_effective_delta:+.2f} (raw {report.injury_raw_delta:+.2f})",
+        )
+        table.add_row(
+            "Items Gained",
+            ", ".join(f"{item_id}x{qty}" for item_id, qty in sorted(report.items_gained.items())) or "-",
+        )
+        table.add_row(
+            "Items Lost",
+            ", ".join(f"{item_id}x{qty}" for item_id, qty in sorted(report.items_lost.items())) or "-",
+        )
+        table.add_row("Flags Set", ", ".join(sorted(report.flags_set)) or "-")
+        table.add_row("Flags Unset", ", ".join(sorted(report.flags_unset)) or "-")
+        if report.death_chance_rolls:
+            rolls = []
+            for roll_info in report.death_chance_rolls:
+                chance = float(roll_info["chance"]) * 100
+                roll = float(roll_info["roll"])
+                result = "TRIGGERED" if bool(roll_info["triggered"]) else "survived"
+                rolls.append(f"{chance:.1f}% (roll {roll:.4f}) -> {result}")
+            table.add_row("Death Chance", "; ".join(rolls))
+        else:
+            table.add_row("Death Chance", "-")
+        notes = self._special_notes(selected_option, report)
+        table.add_row("Special Notes", " ".join(notes) if notes else "-")
+
+        self.console.print(Panel(table, title="[bold green]RESULT[/bold green]", border_style="green"))
+        Prompt.ask("Press Enter to continue", default="")
 
     def _prompt_event_choice(self, event_instance: EventInstance) -> str | None:
         self.console.rule(f"[bold yellow]{event_instance.title}[/bold yellow]")
         self.console.print(event_instance.text)
+        self.console.print("[dim]Event controls: [#] choose  [R] retreat  [Q] quit desktop  [H] help  [Enter] skip[/dim]")
 
         unlocked_ids: list[str] = []
         for idx, option in enumerate(event_instance.options, start=1):
-            status = "LOCKED" if option.locked else "OPEN"
-            reasons = f" ({'; '.join(option.lock_reasons)})" if option.locked and option.lock_reasons else ""
-            self.console.print(f"[{idx}] {option.label} [{status}]{reasons}")
-            if not option.locked:
+            if option.locked:
+                lock_reasons = "; ".join(option.lock_reasons) if option.lock_reasons else "requirements not met"
+                self.console.print(f"[{idx}] [red]{option.label}[/red] [LOCKED] - {lock_reasons}")
+            else:
+                self.console.print(f"[{idx}] [green]{option.label}[/green] [OPEN]")
                 unlocked_ids.append(option.id)
 
         if not unlocked_ids:
-            self.console.print("[yellow]No unlocked options; event is skipped.[/yellow]")
+            self.console.print("[yellow]No unlocked options; event will be skipped.[/yellow]")
             return None
 
+        invalid_count = 0
         while True:
-            choice_raw = Prompt.ask("Choose option #").strip()
+            choice_raw = Prompt.ask("Choose option (or R/Q/H/Enter)", default="").strip().lower()
+            if not choice_raw:
+                return None
+            if choice_raw == "h":
+                show_help_screen(self.console, "Event")
+                continue
+            if choice_raw == "r":
+                return "__retreat__"
+            if choice_raw == "q":
+                return "__quit__"
             if not choice_raw.isdigit():
-                self.console.print("[red]Enter a numeric option index.[/red]")
+                invalid_count += 1
+                self.console.print("[red]Enter a valid option number, R, Q, H, or Enter.[/red]")
+                if invalid_count >= MAX_INPUT_RETRIES:
+                    self.console.print("[yellow]Too many invalid inputs. Skipping event.[/yellow]")
+                    return None
                 continue
             index = int(choice_raw) - 1
             if index < 0 or index >= len(event_instance.options):
+                invalid_count += 1
                 self.console.print("[red]Option out of range.[/red]")
+                if invalid_count >= MAX_INPUT_RETRIES:
+                    self.console.print("[yellow]Too many invalid inputs. Skipping event.[/yellow]")
+                    return None
                 continue
             chosen = event_instance.options[index]
             if chosen.locked:
+                invalid_count += 1
                 self.console.print("[red]That option is locked.[/red]")
+                if invalid_count >= MAX_INPUT_RETRIES:
+                    self.console.print("[yellow]Too many invalid inputs. Skipping event.[/yellow]")
+                    return None
                 continue
             return chosen.id
 
-    def run(self) -> tuple[GameState, list[LogEntry]]:
+    def run(self) -> tuple[GameState, list[LogEntry], RunExit]:
+        run_exit: RunExit = "completed"
+        if self.show_first_help:
+            show_help_screen(self.console, "First Run")
+
+        invalid_count = 0
         while not self.state.dead:
             self._render_hud()
-            action = Prompt.ask(
-                "Continue Until Next Event [c], show full log [l], retreat [q]",
-                choices=["c", "l", "q"],
-                default="c",
-            )
+            action = Prompt.ask("Run action [C/L/R/Q/H]", default="c").strip().lower()
+            if not action:
+                action = "c"
+
+            if action == "h":
+                show_help_screen(self.console, "Run")
+                invalid_count = 0
+                continue
             if action == "l":
                 self.console.print(log_widget(self.logs, tail=200))
+                invalid_count = 0
                 continue
-            if action == "q":
-                self.state.dead = True
-                self.state.death_reason = "Retreated"
-                retreat_log = make_log_entry(self.state, "system", "Run ended by retreat command.")
-                self.logs.append(retreat_log)
+            if action == "r":
+                self.logs.append(apply_retreat(self.state, reason="Retreated to base"))
+                run_exit = "retreat"
                 break
+            if action == "q":
+                self.logs.append(apply_retreat(self.state, reason="Quit to desktop"))
+                run_exit = "quit"
+                break
+            if action != "c":
+                invalid_count += 1
+                self.console.print("[red]Invalid input. Use C/L/R/Q/H.[/red]")
+                if invalid_count >= MAX_INPUT_RETRIES:
+                    self.console.print("[yellow]Too many invalid inputs. Continuing by default.[/yellow]")
+                    action = "c"
+                    invalid_count = 0
+                else:
+                    continue
+            else:
+                invalid_count = 0
 
             _, event_instance, step_logs = advance_to_next_event(self.state, self.content)
             self.logs.extend(step_logs)
@@ -362,13 +580,29 @@ class RunScreen:
                 break
             if event_instance is None:
                 continue
-            option_id = self._prompt_event_choice(event_instance)
-            if option_id is None:
-                continue
-            choice_logs = apply_choice_with_state_rng(self.state, event_instance, option_id, self.content)
-            self.logs.extend(choice_logs)
 
-        return self.state, self.logs
+            option_id = self._prompt_event_choice(event_instance)
+            if option_id == "__retreat__":
+                self.logs.append(apply_retreat(self.state, reason="Retreated to base"))
+                run_exit = "retreat"
+                break
+            if option_id == "__quit__":
+                self.logs.append(apply_retreat(self.state, reason="Quit to desktop"))
+                run_exit = "quit"
+                break
+            if option_id is None:
+                self.logs.append(make_log_entry(self.state, "system", "No option selected. Event dismissed."))
+                continue
+
+            travel_delta = self._extract_travel_delta(step_logs)
+            resolution = apply_choice_with_state_rng_detailed(self.state, event_instance, option_id, self.content)
+            self.logs.extend(resolution.logs)
+
+            selected_option = next((opt for opt in event_instance.options if opt.id == option_id), None)
+            if selected_option:
+                self._show_result_panel(event_instance, selected_option, travel_delta, resolution.report)
+
+        return self.state, self.logs, run_exit
 
 
 class DeathScreen:
@@ -404,7 +638,6 @@ def create_run_state_with_loadout(seed: int | str, biome_id: str, loadout: Equip
 
 
 def reset_loadout_after_run(vault: VaultState, loadout: EquippedSlots) -> EquippedSlots:
-    # Equipped items are considered "in the field". Keep them equipped on the run state and clear staged loadout.
     return EquippedSlots()
 
 

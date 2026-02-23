@@ -109,6 +109,8 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
     for flag in state.death_flags:
         if flag in {"burned", "submerged", "fell", "toxic_exposure"}:
             penalties += 0.12
+        elif flag == "retreated_early":
+            penalties += 0.08
 
     recovery_chance = max(0.05, min(0.95, 0.35 + (0.12 * drone_level) + pack_bonus - penalties))
 

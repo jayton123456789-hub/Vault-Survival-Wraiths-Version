@@ -151,6 +151,7 @@ class GameState(StrictModel):
     equipped: EquippedSlots = Field(default_factory=EquippedSlots)
     dead: bool = False
     death_reason: str | None = None
+    last_event_id: str | None = None
     event_cooldowns: dict[str, int] = Field(default_factory=dict)
     rng_state: int = Field(gt=0)
     rng_calls: int = Field(default=0, ge=0)
@@ -183,6 +184,7 @@ class SettingsState(StrictModel):
     intro_use_cinematic_audio: bool = True
     seeded_mode: bool = True
     base_seed: int = 1337
+    seen_run_help: bool = False
 
 
 class VaultState(StrictModel):

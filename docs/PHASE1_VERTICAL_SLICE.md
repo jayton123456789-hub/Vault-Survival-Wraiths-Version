@@ -48,3 +48,21 @@ Autopick policies:
 ## Notes
 - Save file is `save.json` at repo root.
 - Intro settings can be toggled in Base -> Settings, in `settings.json`, or via `BLS_SKIP_INTRO=1`.
+- Runtime logs are written to `logs/latest.log` and also printed to the terminal.
+
+## Controls
+- Base: `1-6` actions, `H` help, `Q` quit.
+- Loadout: `1-6` equip slots, `C` clear slot, `H` help, `B` back.
+- Run: `C` continue until next event, `L` full log, `R` retreat to base, `Q` quit desktop, `H` help.
+- Event prompt: option number, `R` retreat, `Q` quit, `H` help, `Enter` skip event.
+
+## Retreat Behavior
+- Retreat ends the run immediately and marks a recovery penalty (`retreated_early`).
+- Drone recovery still runs on current inventory + equipped gear before returning to base.
+
+## Intro Red Overlay Tuning
+In `bit_life_survival/app/intro.py`:
+- `RED_OVERLAY_ALPHA_SHAKE` controls impact-frame red intensity.
+- `RED_OVERLAY_ALPHA_POST` controls post-shake/hold red glow.
+
+Lower values reduce red tint. Set `RED_OVERLAY_ALPHA_POST = 0` to effectively remove post-shake red.
