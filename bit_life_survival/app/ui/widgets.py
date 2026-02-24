@@ -81,6 +81,7 @@ class Button:
     text: str
     on_click: Callable[[], None] | None = None
     hotkey: int | None = None
+    tooltip: str | None = None
     enabled: bool = True
     hovered: bool = False
     bg: tuple[int, int, int] = theme.COLOR_PANEL_ALT

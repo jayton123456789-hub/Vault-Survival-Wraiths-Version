@@ -7,7 +7,7 @@ from typing import Any, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
-from .models import Biome, Event, Item, LootTable, METER_NAMES
+from .models import Biome, Event, Item, LootTable, METER_NAMES, Recipe
 
 T = TypeVar("T")
 
@@ -25,10 +25,12 @@ class ContentBundle:
     loottables: list[LootTable]
     biomes: list[Biome]
     events: list[Event]
+    recipes: list[Recipe]
     item_by_id: dict[str, Item]
     loottable_by_id: dict[str, LootTable]
     biome_by_id: dict[str, Biome]
     event_by_id: dict[str, Event]
+    recipe_by_id: dict[str, Recipe]
 
 
 def _load_json(path: Path) -> Any:
@@ -51,6 +53,12 @@ def _load_typed_list(path: Path, item_type: type[T]) -> list[T]:
             issue_path = ".".join(str(part) for part in issue.get("loc", [])) or "(root)"
             errors.append(f"{path.name}:{issue_path}: {issue.get('msg', 'validation error')}")
         raise ContentValidationError(f"Schema validation failed for {path.name}.", errors) from exc
+
+
+def _load_optional_typed_list(path: Path, item_type: type[T]) -> list[T]:
+    if not path.exists():
+        return []
+    return _load_typed_list(path, item_type)
 
 
 def _assert_unique_ids(kind: str, values: list[Any]) -> None:
@@ -188,6 +196,7 @@ def _validate_references(
     loottables: list[LootTable],
     biomes: list[Biome],
     events: list[Event],
+    recipes: list[Recipe],
 ) -> None:
     item_ids = {item.id for item in items}
     loottable_ids = {table.id for table in loottables}
@@ -247,6 +256,17 @@ def _validate_references(
                     loottable_ids,
                 )
 
+    for recipe in recipes:
+        for input_id in recipe.inputs:
+            _assert_ref(
+                input_id in item_ids,
+                f"recipe '{recipe.id}' input references missing item '{input_id}'.",
+            )
+        _assert_ref(
+            recipe.output_item in item_ids,
+            f"recipe '{recipe.id}' output references missing item '{recipe.output_item}'.",
+        )
+
 
 def load_content(content_dir: Path | str) -> ContentBundle:
     base_path = Path(content_dir)
@@ -254,21 +274,25 @@ def load_content(content_dir: Path | str) -> ContentBundle:
     loottables = _load_typed_list(base_path / "loottables.json", LootTable)
     biomes = _load_typed_list(base_path / "biomes.json", Biome)
     events = _load_typed_list(base_path / "events.json", Event)
+    recipes = _load_optional_typed_list(base_path / "recipes.json", Recipe)
 
     _assert_unique_ids("item", items)
     _assert_unique_ids("loot table", loottables)
     _assert_unique_ids("biome", biomes)
     _assert_unique_ids("event", events)
+    _assert_unique_ids("recipe", recipes)
 
-    _validate_references(items, loottables, biomes, events)
+    _validate_references(items, loottables, biomes, events, recipes)
 
     return ContentBundle(
         items=items,
         loottables=loottables,
         biomes=biomes,
         events=events,
+        recipes=recipes,
         item_by_id={item.id: item for item in items},
         loottable_by_id={table.id: table for table in loottables},
         biome_by_id={biome.id: biome for biome in biomes},
         event_by_id={event.id: event for event in events},
+        recipe_by_id={recipe.id: recipe for recipe in recipes},
     )

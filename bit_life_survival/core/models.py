@@ -8,9 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 MeterName = Literal["stamina", "hydration", "morale"]
 ItemSlot = Literal["pack", "armor", "vehicle", "utility", "faction", "consumable"]
 ItemRarity = Literal["common", "uncommon", "rare", "legendary"]
+MaterialName = Literal["scrap", "cloth", "plastic", "metal"]
 
 RUNNER_EQUIP_SLOTS = ("pack", "armor", "vehicle", "utility1", "utility2", "faction")
 METER_NAMES: tuple[MeterName, MeterName, MeterName] = ("stamina", "hydration", "morale")
+MATERIAL_ITEM_IDS: tuple[MaterialName, MaterialName, MaterialName, MaterialName] = ("scrap", "cloth", "plastic", "metal")
 
 
 class StrictModel(BaseModel):
@@ -74,6 +76,15 @@ class LootTable(StrictModel):
     entries: list[LootTableEntry] = Field(min_length=1)
     rolls: int = Field(default=1, ge=1)
     guaranteed: list[GuaranteedLoot] = Field(default_factory=list)
+
+
+class Recipe(StrictModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str = ""
+    inputs: dict[str, int] = Field(default_factory=dict)
+    output_item: str = Field(alias="outputItem", min_length=1)
+    output_qty: int = Field(default=1, alias="outputQty", ge=1)
 
 
 class MeterDrainMultipliers(StrictModel):
@@ -177,6 +188,11 @@ class Citizen(StrictModel):
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     quirk: str = Field(min_length=1)
+    kit: dict[str, int] = Field(default_factory=dict)
+
+
+def default_materials() -> dict[str, int]:
+    return {material: 0 for material in MATERIAL_ITEM_IDS}
 
 
 class SettingsState(StrictModel):
@@ -188,6 +204,7 @@ class SettingsState(StrictModel):
 
 
 class VaultState(StrictModel):
+    materials: dict[str, int] = Field(default_factory=default_materials)
     storage: dict[str, int] = Field(default_factory=dict)
     blueprints: set[str] = Field(default_factory=set)
     upgrades: dict[str, int] = Field(default_factory=dict)
@@ -211,6 +228,16 @@ class VaultState(StrictModel):
             if qty < 0:
                 raise ValueError(f"Vault storage quantity for '{item_id}' cannot be negative.")
         return storage
+
+    @field_validator("materials")
+    @classmethod
+    def validate_materials(cls, materials: dict[str, int]) -> dict[str, int]:
+        hydrated = default_materials()
+        for item_id, qty in materials.items():
+            if qty < 0:
+                raise ValueError(f"Vault material quantity for '{item_id}' cannot be negative.")
+            hydrated[item_id] = int(qty)
+        return hydrated
 
 
 class SaveData(StrictModel):

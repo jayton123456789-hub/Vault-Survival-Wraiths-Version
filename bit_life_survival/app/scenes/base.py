@@ -1,36 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pygame
 
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import split_columns, split_rows
-from bit_life_survival.app.ui.widgets import Button, Panel, draw_text, wrap_text
+from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, wrap_text
+from bit_life_survival.core.crafting import can_craft, craft
 from bit_life_survival.core.models import GameState
-from bit_life_survival.core.persistence import draft_citizen_from_claw, refill_citizen_queue, store_item, take_item
+from bit_life_survival.core.persistence import draft_citizen_from_claw, refill_citizen_queue, storage_used
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
 
 
-@dataclass(slots=True)
-class Recipe:
-    id: str
-    name: str
-    inputs: dict[str, int]
-    output_item: str
-    output_qty: int = 1
-
-
-RECIPES: list[Recipe] = [
-    Recipe("field_pack", "Field Pack", {"scrap": 4, "cloth": 3, "plastic": 2}, "field_pack"),
-    Recipe("patchwork_armor", "Patchwork Armor", {"scrap": 3, "metal": 4, "cloth": 2}, "patchwork_armor"),
-    Recipe("filter_mask", "Filter Mask", {"plastic": 4, "cloth": 2, "metal": 1}, "filter_mask"),
-    Recipe("lockpick_set", "Lockpick Set", {"metal": 3, "plastic": 1}, "lockpick_set"),
-    Recipe("radio_parts", "Radio Parts", {"metal": 3, "plastic": 3}, "radio_parts"),
-    Recipe("med_armband", "Medical Armband", {"cloth": 4, "plastic": 1}, "med_armband"),
-]
+SLOT_FILTER_VALUES = ["all", "pack", "armor", "vehicle", "utility", "faction", "consumable"]
+RARITY_FILTER_VALUES = ["all", "common", "uncommon", "rare", "legendary"]
+MATERIAL_IDS = ("scrap", "cloth", "plastic", "metal")
 
 
 class BaseScene(Scene):
@@ -39,29 +24,22 @@ class BaseScene(Scene):
         self.selected_module = "storage"
         self.buttons: list[Button] = []
         self._last_size: tuple[int, int] | None = None
+        self.storage_scroll: ScrollList | None = None
+        self._storage_rows: list[tuple[str, int]] = []
+        self.selected_storage_item_id: str | None = None
+        self.selected_slot_filter = "all"
+        self.selected_rarity_filter = "all"
 
     def _draw_top_bar(self, app, surface: pygame.Surface, rect: pygame.Rect) -> None:
         vault = app.save_data.vault
-        storage_used = sum(max(0, qty) for qty in vault.storage.values())
-        counts = {k: vault.storage.get(k, 0) for k in ("scrap", "cloth", "plastic", "metal")}
+        used = storage_used(vault)
+        mats = vault.materials
         line = (
             f"Vault Lv {vault.vault_level}   TAV {vault.tav}   Drone Bay {int(vault.upgrades.get('drone_bay_level', 0))}   "
-            f"Storage Used {storage_used}   Scrap {counts['scrap']}   Cloth {counts['cloth']}   "
-            f"Plastic {counts['plastic']}   Metal {counts['metal']}"
+            f"Storage Used {used}   Scrap {mats.get('scrap', 0)}   Cloth {mats.get('cloth', 0)}   "
+            f"Plastic {mats.get('plastic', 0)}   Metal {mats.get('metal', 0)}"
         )
         draw_text(surface, line, theme.get_font(20, bold=True), theme.COLOR_TEXT, (rect.left + 12, rect.centery), "midleft")
-
-    def _craft(self, app, recipe: Recipe) -> None:
-        vault = app.save_data.vault
-        for item_id, qty in recipe.inputs.items():
-            if vault.storage.get(item_id, 0) < qty:
-                self.message = f"Missing materials for {recipe.name}."
-                return
-        for item_id, qty in recipe.inputs.items():
-            take_item(vault, item_id, qty)
-        store_item(vault, recipe.output_item, recipe.output_qty)
-        app.save_current_slot()
-        self.message = f"Crafted {recipe.output_qty}x {recipe.output_item}."
 
     def _deploy(self, app) -> None:
         if app.save_data.vault.current_citizen is None:
@@ -99,6 +77,55 @@ class BaseScene(Scene):
         app.save_current_slot()
         self.message = f"Drafted {drafted.name}."
 
+    def _cycle_storage_filter(self, app, which: str) -> None:
+        if which == "slot":
+            values = SLOT_FILTER_VALUES
+            idx = values.index(self.selected_slot_filter)
+            self.selected_slot_filter = values[(idx + 1) % len(values)]
+        else:
+            values = RARITY_FILTER_VALUES
+            idx = values.index(self.selected_rarity_filter)
+            self.selected_rarity_filter = values[(idx + 1) % len(values)]
+        self._refresh_storage_rows(app)
+
+    def _storage_matches_filters(self, item) -> bool:
+        if self.selected_slot_filter != "all" and item.slot != self.selected_slot_filter:
+            return False
+        if self.selected_rarity_filter != "all" and item.rarity != self.selected_rarity_filter:
+            return False
+        return True
+
+    def _refresh_storage_rows(self, app) -> None:
+        rows: list[tuple[str, int]] = []
+        for item_id, qty in sorted(app.save_data.vault.storage.items()):
+            if qty <= 0:
+                continue
+            item = app.content.item_by_id.get(item_id)
+            if not item:
+                continue
+            if not self._storage_matches_filters(item):
+                continue
+            rows.append((item_id, qty))
+        self._storage_rows = rows
+        if self.storage_scroll:
+            self.storage_scroll.set_items([f"{app.content.item_by_id[item_id].name} x{qty}" for item_id, qty in rows])
+
+    def _on_storage_select(self, index: int) -> None:
+        if 0 <= index < len(self._storage_rows):
+            self.selected_storage_item_id = self._storage_rows[index][0]
+
+    def _craft_recipe(self, app, recipe_id: str) -> None:
+        recipe = app.content.recipe_by_id.get(recipe_id)
+        if recipe is None:
+            self.message = f"Recipe '{recipe_id}' missing."
+            return
+        if not craft(app.save_data.vault, recipe):
+            self.message = f"Missing materials for {recipe.name}."
+            return
+        app.save_current_slot()
+        self._refresh_storage_rows(app)
+        self.message = f"Crafted {recipe.output_qty}x {recipe.name}."
+
     def _build_layout(self, app) -> None:
         if self._last_size == app.screen.get_size() and self.buttons:
             return
@@ -120,27 +147,66 @@ class BaseScene(Scene):
                 "Use The Claw",
                 hotkey=pygame.K_u,
                 on_click=lambda: self._claw(app),
+                tooltip="Draft the next citizen for deployment.",
             )
         )
 
         module_row = pygame.Rect(self._center_rect.left + 12, self._center_rect.top + 40, self._center_rect.width - 24, 44)
         modules = split_columns(module_row, [1, 1, 1], gap=8)
-        self.buttons.append(Button(modules[0], "Storage", on_click=lambda: setattr(self, "selected_module", "storage")))
-        self.buttons.append(Button(modules[1], "Crafting", on_click=lambda: setattr(self, "selected_module", "crafting")))
-        self.buttons.append(Button(modules[2], "Drone Bay", on_click=lambda: setattr(self, "selected_module", "drone")))
+        self.buttons.append(Button(modules[0], "Storage", on_click=lambda: setattr(self, "selected_module", "storage"), tooltip="Browse stored gear."))
+        self.buttons.append(Button(modules[1], "Crafting", on_click=lambda: setattr(self, "selected_module", "crafting"), tooltip="Build gear from materials."))
+        self.buttons.append(Button(modules[2], "Drone Bay", on_click=lambda: setattr(self, "selected_module", "drone"), tooltip="Review recovery capability."))
 
-        bottom_cols = split_columns(pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top + 8, self._bottom_rect.width - 16, self._bottom_rect.height - 16), [1, 1, 1, 1], gap=10)
-        self.buttons.append(Button(bottom_cols[0], "Loadout", hotkey=pygame.K_l, on_click=lambda: self._open_loadout(app)))
-        self.buttons.append(Button(bottom_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app)))
-        self.buttons.append(Button(bottom_cols[2], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app)))
-        self.buttons.append(Button(bottom_cols[3], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._main_menu(app)))
+        if self.selected_module == "storage":
+            filter_row = pygame.Rect(self._center_rect.left + 12, self._center_rect.top + 94, self._center_rect.width - 24, 36)
+            filter_cols = split_columns(filter_row, [1, 1], gap=8)
+            self.buttons.append(
+                Button(
+                    filter_cols[0],
+                    f"Slot: {self.selected_slot_filter}",
+                    on_click=lambda: self._cycle_storage_filter(app, "slot"),
+                    tooltip="Filter stored gear by slot type.",
+                )
+            )
+            self.buttons.append(
+                Button(
+                    filter_cols[1],
+                    f"Rarity: {self.selected_rarity_filter}",
+                    on_click=lambda: self._cycle_storage_filter(app, "rarity"),
+                    tooltip="Filter stored gear by rarity.",
+                )
+            )
+            list_rect = pygame.Rect(self._center_rect.left + 12, self._center_rect.top + 136, self._center_rect.width - 24, self._center_rect.height - 148)
+            self.storage_scroll = ScrollList(list_rect, row_height=28, on_select=self._on_storage_select)
+            self._refresh_storage_rows(app)
+        else:
+            self.storage_scroll = None
 
         if self.selected_module == "crafting":
             start_y = self._center_rect.top + 110
-            for recipe in RECIPES:
+            for recipe in app.content.recipes[:10]:
                 row = pygame.Rect(self._center_rect.left + 12, start_y, self._center_rect.width - 24, 34)
-                self.buttons.append(Button(row, f"Craft: {recipe.name}", on_click=lambda r=recipe: self._craft(app, r)))
+                craftable, _ = can_craft(app.save_data.vault, recipe)
+                self.buttons.append(
+                    Button(
+                        row,
+                        f"Craft: {recipe.name}",
+                        enabled=craftable,
+                        on_click=lambda rid=recipe.id: self._craft_recipe(app, rid),
+                        tooltip=recipe.description or f"Craft {recipe.name}.",
+                    )
+                )
                 start_y += 38
+
+        bottom_cols = split_columns(
+            pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top + 8, self._bottom_rect.width - 16, self._bottom_rect.height - 16),
+            [1, 1, 1, 1],
+            gap=10,
+        )
+        self.buttons.append(Button(bottom_cols[0], "Loadout", hotkey=pygame.K_l, on_click=lambda: self._open_loadout(app), tooltip="Choose equipment for the next run."))
+        self.buttons.append(Button(bottom_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), tooltip="Start a run with current draft and loadout."))
+        self.buttons.append(Button(bottom_cols[2], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), tooltip="Open gameplay and video settings."))
+        self.buttons.append(Button(bottom_cols[3], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._main_menu(app), tooltip="Return to the front menu."))
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
@@ -148,65 +214,53 @@ class BaseScene(Scene):
             return
         self._build_layout(app)
         if event.type == pygame.KEYDOWN and event.key == pygame.K_h:
-            self.message = "Controls: U claw, L loadout, D deploy, S settings, ESC menu."
+            self.message = "Vault help: U claw, L loadout, D deploy, S settings, H help."
+            return
+        if self.storage_scroll and self.storage_scroll.handle_event(event):
             return
         for button in self.buttons:
             if button.handle_event(event):
                 self._last_size = None
                 return
 
-    def render(self, app, surface: pygame.Surface) -> None:
-        if app.save_data is None:
-            from .menu import MainMenuScene
-
-            app.change_scene(MainMenuScene("No save loaded."))
-            return
-        refill_citizen_queue(app.save_data.vault, target_size=12)
-        self._build_layout(app)
-
-        surface.fill(theme.COLOR_BG)
-        Panel(self._top_rect, title="Vault Dashboard").draw(surface)
-        Panel(self._left_rect, title="Citizen Line").draw(surface)
-        Panel(self._center_rect, title="Vault Modules").draw(surface)
-        Panel(self._right_rect, title="Loadout Preview").draw(surface)
-        Panel(self._bottom_rect).draw(surface)
-
-        self._draw_top_bar(app, surface, self._top_rect)
-        mouse_pos = pygame.mouse.get_pos()
-        for button in self.buttons:
-            if self.selected_module == "crafting" and button.text.startswith("Craft:"):
-                # Grey-out unavailable recipes.
-                recipe_name = button.text.replace("Craft: ", "")
-                recipe = next((r for r in RECIPES if r.name == recipe_name), None)
-                if recipe:
-                    button.enabled = all(app.save_data.vault.storage.get(item, 0) >= qty for item, qty in recipe.inputs.items())
-            button.draw(surface, mouse_pos)
-
-        queue = app.save_data.vault.citizen_queue[:5]
-        y = self._left_rect.top + 48
-        draw_text(surface, f"Queued Citizens: {len(app.save_data.vault.citizen_queue)}", theme.get_font(18), theme.COLOR_TEXT, (self._left_rect.left + 12, y))
-        y += 28
-        for citizen in queue:
-            draw_text(surface, f"- {citizen.name} ({citizen.quirk})", theme.get_font(16), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 14, y))
-            y += 24
-        current = app.save_data.vault.current_citizen
-        y += 12
-        draw_text(surface, "Current Draft:", theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._left_rect.left + 12, y))
-        y += 24
-        if current:
-            draw_text(surface, f"{current.name} - {current.quirk}", theme.get_font(16), theme.COLOR_SUCCESS, (self._left_rect.left + 12, y))
-        else:
-            draw_text(surface, "None", theme.get_font(16), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 12, y))
-
-        center_body = pygame.Rect(self._center_rect.left + 14, self._center_rect.top + 94, self._center_rect.width - 28, self._center_rect.height - 108)
+    def _draw_storage_module(self, app, surface: pygame.Surface) -> None:
+        materials_rect = pygame.Rect(self._center_rect.left + 12, self._center_rect.top + 94, self._center_rect.width - 24, 36)
         if self.selected_module == "storage":
-            items = sorted((item_id, qty) for item_id, qty in app.save_data.vault.storage.items() if qty > 0)[:16]
-            yy = center_body.top
-            for item_id, qty in items:
-                draw_text(surface, f"{item_id}: {qty}", theme.get_font(16), theme.COLOR_TEXT, (center_body.left, yy))
-                yy += 22
+            material_row = pygame.Rect(self._center_rect.left + 12, self._center_rect.top + 54, self._center_rect.width - 24, 30)
+            cols = split_columns(material_row, [1, 1, 1, 1], gap=8)
+            for col, mid in zip(cols, MATERIAL_IDS):
+                pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, col, border_radius=6)
+                pygame.draw.rect(surface, theme.COLOR_BORDER, col, width=1, border_radius=6)
+                draw_text(
+                    surface,
+                    f"{mid.title()}: {app.save_data.vault.materials.get(mid, 0)}",
+                    theme.get_font(14, bold=True),
+                    theme.COLOR_TEXT,
+                    col.center,
+                    "center",
+                )
+            if self.storage_scroll:
+                self.storage_scroll.draw(surface)
+            draw_text(
+                surface,
+                "Materials pouch does not count toward Storage Used.",
+                theme.get_font(14),
+                theme.COLOR_TEXT_MUTED,
+                (materials_rect.left, materials_rect.bottom + 6),
+            )
         elif self.selected_module == "crafting":
-            draw_text(surface, "Crafting recipes (greyed-out = missing materials):", theme.get_font(16), theme.COLOR_TEXT_MUTED, (center_body.left, center_body.top))
+            draw_text(surface, "Crafting recipes (greyed-out = missing materials).", theme.get_font(16), theme.COLOR_TEXT_MUTED, (materials_rect.left, materials_rect.top))
+            draw_text(
+                surface,
+                "Materials",
+                theme.get_font(15, bold=True),
+                theme.COLOR_TEXT,
+                (materials_rect.left, materials_rect.top + 24),
+            )
+            y = materials_rect.top + 46
+            for mid in MATERIAL_IDS:
+                draw_text(surface, f"{mid.title()}: {app.save_data.vault.materials.get(mid, 0)}", theme.get_font(15), theme.COLOR_TEXT_MUTED, (materials_rect.left, y))
+                y += 20
         else:
             level = int(app.save_data.vault.upgrades.get("drone_bay_level", 0))
             lines = [
@@ -214,12 +268,38 @@ class BaseScene(Scene):
                 "Higher levels improve recovery chance.",
                 "Upgrade paths arrive in later phases.",
             ]
-            yy = center_body.top
+            yy = materials_rect.top
             for line in lines:
-                draw_text(surface, line, theme.get_font(16), theme.COLOR_TEXT, (center_body.left, yy))
+                draw_text(surface, line, theme.get_font(16), theme.COLOR_TEXT, (materials_rect.left, yy))
                 yy += 24
 
-        # Right preview: tags + modifiers from staged loadout.
+    def _draw_right_panel(self, app, surface: pygame.Surface) -> None:
+        if self.selected_module == "storage" and self.selected_storage_item_id:
+            item = app.content.item_by_id.get(self.selected_storage_item_id)
+            if item:
+                y = self._right_rect.top + 50
+                draw_text(surface, item.name, theme.get_font(20, bold=True), theme.COLOR_TEXT, (self._right_rect.left + 12, y))
+                y += 26
+                draw_text(surface, f"ID: {item.id}", theme.get_font(14), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 12, y))
+                y += 22
+                draw_text(surface, f"Slot: {item.slot} | Rarity: {item.rarity}", theme.get_font(15), theme.COLOR_TEXT, (self._right_rect.left + 12, y))
+                y += 22
+                draw_text(surface, f"Stored Qty: {app.save_data.vault.storage.get(item.id, 0)}", theme.get_font(15), theme.COLOR_TEXT, (self._right_rect.left + 12, y))
+                y += 24
+                tags = ", ".join(item.tags) if item.tags else "-"
+                for line in wrap_text(f"Tags: {tags}", theme.get_font(14), self._right_rect.width - 24):
+                    draw_text(surface, line, theme.get_font(14), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 12, y))
+                    y += 18
+                y += 6
+                mods = item.modifiers.model_dump(mode="python", exclude_none=True)
+                if not mods:
+                    draw_text(surface, "No stat modifiers.", theme.get_font(14), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 12, y))
+                else:
+                    for key, value in mods.items():
+                        draw_text(surface, f"{key}: {value:+.2f}" if isinstance(value, float) else f"{key}: {value}", theme.get_font(14), theme.COLOR_TEXT, (self._right_rect.left + 12, y))
+                        y += 18
+                return
+
         preview_state = GameState(
             seed=0,
             biome_id="suburbs",
@@ -229,8 +309,8 @@ class BaseScene(Scene):
         )
         summary = compute_loadout_summary(preview_state, app.content)
         yy = self._right_rect.top + 50
-        draw_text(surface, "Equipped:", theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._right_rect.left + 12, yy))
-        yy += 24
+        draw_text(surface, "Loadout Preview", theme.get_font(18, bold=True), theme.COLOR_TEXT, (self._right_rect.left + 12, yy))
+        yy += 26
         for slot_name, item_id in app.current_loadout.model_dump(mode="python").items():
             label = item_id or "-"
             draw_text(surface, f"{slot_name}: {label}", theme.get_font(15), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 14, yy))
@@ -249,6 +329,46 @@ class BaseScene(Scene):
         for line in stats:
             draw_text(surface, line, theme.get_font(15), theme.COLOR_TEXT, (self._right_rect.left + 12, yy))
             yy += 20
+
+    def render(self, app, surface: pygame.Surface) -> None:
+        if app.save_data is None:
+            from .menu import MainMenuScene
+
+            app.change_scene(MainMenuScene("No save loaded."))
+            return
+        refill_citizen_queue(app.save_data.vault, target_size=12)
+        self._build_layout(app)
+
+        surface.fill(theme.COLOR_BG)
+        Panel(self._top_rect, title="Vault Dashboard").draw(surface)
+        Panel(self._left_rect, title="Citizen Line").draw(surface)
+        Panel(self._center_rect, title="Vault Modules").draw(surface)
+        Panel(self._right_rect, title="Details").draw(surface)
+        Panel(self._bottom_rect).draw(surface)
+
+        self._draw_top_bar(app, surface, self._top_rect)
+        mouse_pos = pygame.mouse.get_pos()
+        for button in self.buttons:
+            button.draw(surface, mouse_pos)
+
+        queue = app.save_data.vault.citizen_queue[:5]
+        y = self._left_rect.top + 48
+        draw_text(surface, f"Queued Citizens: {len(app.save_data.vault.citizen_queue)}", theme.get_font(18), theme.COLOR_TEXT, (self._left_rect.left + 12, y))
+        y += 28
+        for citizen in queue:
+            draw_text(surface, f"- {citizen.name} ({citizen.quirk})", theme.get_font(16), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 14, y))
+            y += 24
+        current = app.save_data.vault.current_citizen
+        y += 12
+        draw_text(surface, "Current Draft:", theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._left_rect.left + 12, y))
+        y += 24
+        if current:
+            draw_text(surface, f"{current.name} - {current.quirk}", theme.get_font(16), theme.COLOR_SUCCESS, (self._left_rect.left + 12, y))
+        else:
+            draw_text(surface, "None", theme.get_font(16), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 12, y))
+
+        self._draw_storage_module(app, surface)
+        self._draw_right_panel(app, surface)
 
         if self.message:
             draw_text(surface, self.message, theme.get_font(17), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 8), "midbottom")

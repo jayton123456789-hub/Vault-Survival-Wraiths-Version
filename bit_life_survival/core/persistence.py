@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import Citizen, SaveData, SettingsState, VaultState
+from .models import MATERIAL_ITEM_IDS, Citizen, SaveData, SettingsState, VaultState, default_materials
 from .rng import DeterministicRNG
 
 DEFAULT_QUEUE_TARGET = 12
@@ -54,15 +54,23 @@ def _make_citizen(rng: DeterministicRNG, sequence: int) -> Citizen:
     name = NAME_POOL[rng.next_int(0, len(NAME_POOL))]
     quirk = QUIRK_POOL[rng.next_int(0, len(QUIRK_POOL))]
     cid = f"cit_{sequence:04d}_{rng.state:08x}"
-    return Citizen(id=cid, name=name, quirk=quirk)
+    kit = {
+        "water_pouch": 1,
+        "ration_pack": 1,
+    }
+    if rng.next_float() < 0.4:
+        kit["scrap"] = 1 + rng.next_int(0, 3)
+    if rng.next_float() < 0.25:
+        kit["cloth"] = 1 + rng.next_int(0, 2)
+    if "batteries" in quirk.lower() and rng.next_float() < 0.55:
+        kit["battery_bank"] = 1
+    if "routes" in quirk.lower() and rng.next_float() < 0.45:
+        kit["lockpick_set"] = 1
+    return Citizen(id=cid, name=name, quirk=quirk, kit=kit)
 
 
 def _default_storage() -> dict[str, int]:
     return {
-        "scrap": 22,
-        "cloth": 16,
-        "plastic": 14,
-        "metal": 12,
         "water_pouch": 4,
         "ration_pack": 4,
         "backpack_basic": 1,
@@ -79,6 +87,7 @@ def _default_storage() -> dict[str, int]:
 def create_default_vault_state(base_seed: int = 1337) -> VaultState:
     claw_seed = DeterministicRNG.from_seed(f"{base_seed}:claw")
     vault = VaultState(
+        materials={"scrap": 22, "cloth": 16, "plastic": 14, "metal": 12},
         storage=_default_storage(),
         blueprints={"field_pack_recipe", "patchwork_armor_recipe"},
         upgrades={"drone_bay_level": 0},
@@ -107,9 +116,13 @@ def load_save_data(save_path: Path | str = "save.json", base_seed: int = 1337) -
         return create_default_save_data(base_seed=base_seed)
     data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, dict) and "vault" in data:
-        return SaveData.model_validate(data)
+        hydrated = SaveData.model_validate(data)
+        _migrate_materials(hydrated.vault)
+        return hydrated
     # Backward compatibility with older save format containing only vault object.
-    return SaveData(vault=VaultState.model_validate(data))
+    hydrated = SaveData(vault=VaultState.model_validate(data))
+    _migrate_materials(hydrated.vault)
+    return hydrated
 
 
 def save_save_data(state: SaveData, save_path: Path | str = "save.json") -> None:
@@ -117,16 +130,37 @@ def save_save_data(state: SaveData, save_path: Path | str = "save.json") -> None
     path.write_text(json.dumps(state.model_dump(mode="json"), indent=2), encoding="utf-8")
 
 
+def _migrate_materials(vault: VaultState) -> None:
+    if not vault.materials:
+        vault.materials = default_materials()
+    for material_id in MATERIAL_ITEM_IDS:
+        qty = int(vault.storage.pop(material_id, 0))
+        if qty > 0:
+            vault.materials[material_id] = int(vault.materials.get(material_id, 0)) + qty
+        else:
+            vault.materials.setdefault(material_id, 0)
+
+
 def store_item(vault: VaultState, item_id: str, qty: int = 1) -> None:
     if qty <= 0:
         return
-    vault.storage[item_id] = vault.storage.get(item_id, 0) + qty
+    if item_id in MATERIAL_ITEM_IDS:
+        vault.materials[item_id] = int(vault.materials.get(item_id, 0)) + qty
+        return
+    vault.storage[item_id] = int(vault.storage.get(item_id, 0)) + qty
 
 
 def take_item(vault: VaultState, item_id: str, qty: int = 1) -> bool:
     if qty <= 0:
         return True
-    current = vault.storage.get(item_id, 0)
+    if item_id in MATERIAL_ITEM_IDS:
+        current = int(vault.materials.get(item_id, 0))
+        if current < qty:
+            return False
+        vault.materials[item_id] = current - qty
+        return True
+
+    current = int(vault.storage.get(item_id, 0))
     if current < qty:
         return False
     remaining = current - qty
@@ -135,6 +169,10 @@ def take_item(vault: VaultState, item_id: str, qty: int = 1) -> bool:
     else:
         vault.storage[item_id] = remaining
     return True
+
+
+def storage_used(vault: VaultState) -> int:
+    return sum(max(0, int(qty)) for qty in vault.storage.values())
 
 
 def refill_citizen_queue(vault: VaultState, target_size: int = DEFAULT_QUEUE_TARGET) -> None:
