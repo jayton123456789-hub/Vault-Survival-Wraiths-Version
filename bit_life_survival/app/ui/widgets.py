@@ -181,6 +181,7 @@ class ScrollList:
     selected_index: int | None = None
     offset: int = 0
     on_select: Callable[[int], None] | None = None
+    row_renderer: Callable[[pygame.Surface, pygame.Rect, int, str, bool, float], None] | None = None
 
     def set_items(self, items: list[str]) -> None:
         self.items = items
@@ -230,11 +231,16 @@ class ScrollList:
         end = min(len(self.items), start + self.visible_rows())
         y = self.rect.top
         font = theme.get_font(16)
+        now_s = pygame.time.get_ticks() / 1000.0
         for index in range(start, end):
             row_rect = pygame.Rect(self.rect.left + 2, y + 2, self.rect.width - 4, self.row_height - 4)
-            if self.selected_index == index:
+            selected = self.selected_index == index
+            if selected:
                 pygame.draw.rect(surface, theme.COLOR_ACCENT_SOFT, row_rect, border_radius=6)
-            draw_text(surface, self.items[index], font, theme.COLOR_TEXT, (row_rect.left + 8, row_rect.centery), "midleft")
+            if self.row_renderer is not None:
+                self.row_renderer(surface, row_rect, index, self.items[index], selected, now_s)
+            else:
+                draw_text(surface, self.items[index], font, theme.COLOR_TEXT, (row_rect.left + 8, row_rect.centery), "midleft")
             y += self.row_height
 
 
