@@ -7,7 +7,7 @@ from typing import Any, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
-from .models import Biome, Event, Item, LootTable, METER_NAMES, Recipe
+from .models import BODY_PARTS, Biome, Event, Item, LootTable, METER_NAMES, Recipe
 
 T = TypeVar("T")
 
@@ -166,8 +166,16 @@ def _validate_outcome(
                 raise ContentValidationError(f"{path}.metersDelta.{meter} must be numeric.")
         return
     if op == "addInjury":
-        if not isinstance(value, (int, float)):
-            raise ContentValidationError(f"{path}.addInjury must be numeric.")
+        if isinstance(value, (int, float)):
+            return
+        if not isinstance(value, dict):
+            raise ContentValidationError(f"{path}.addInjury must be numeric or an object.")
+        amount = value.get("amount")
+        if not isinstance(amount, (int, float)):
+            raise ContentValidationError(f"{path}.addInjury.amount must be numeric.")
+        part = value.get("part")
+        if part is not None and part not in BODY_PARTS:
+            raise ContentValidationError(f"{path}.addInjury.part must be one of {', '.join(BODY_PARTS)}.")
         return
     if op == "setDeathChance":
         if not isinstance(value, (int, float)) or value < 0 or value > 1:

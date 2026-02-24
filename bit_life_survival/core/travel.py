@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .loader import ContentBundle
-from .models import GameState, clamp_meter, make_log_entry
+from .models import GameState, clamp_meter, make_log_entry, sync_total_injury
 
 BASE_SPEED = 1.0
 BASE_DRAIN = {
@@ -19,6 +19,7 @@ def _equipped_item_ids(state: GameState) -> list[str]:
 
 
 def apply_death_checks(state: GameState) -> str | None:
+    sync_total_injury(state)
     if state.dead:
         return state.death_reason
     if state.meters.hydration <= 0:

@@ -11,8 +11,9 @@ from bit_life_survival.app.ui.widgets import Button, Panel, ProgressBar, draw_te
 from bit_life_survival.core.drone import run_drone_recovery
 from bit_life_survival.core.engine import EventInstance, apply_choice_with_state_rng_detailed, create_initial_state, advance_to_next_event
 from bit_life_survival.core.models import EquippedSlots, LogEntry, make_log_entry
-from bit_life_survival.core.outcomes import OutcomeReport
+from bit_life_survival.core.outcomes import OutcomeReport, apply_outcomes
 from bit_life_survival.core.persistence import refill_citizen_queue
+from bit_life_survival.core.rng import DeterministicRNG
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
@@ -59,6 +60,22 @@ class RunScene(Scene):
         self._app = app
         self.state = create_initial_state(self.run_seed, self.biome_id)
         self.state.equipped = app.current_loadout.model_copy(deep=True)
+        citizen = app.save_data.vault.current_citizen
+        if citizen:
+            for item_id, qty in citizen.kit.items():
+                if qty > 0:
+                    self.state.inventory[item_id] = self.state.inventory.get(item_id, 0) + int(qty)
+            self._append_logs(
+                app,
+                [
+                    make_log_entry(
+                        self.state,
+                        "system",
+                        f"{citizen.name} enters the run with kit: "
+                        + ", ".join(f"{item} x{qty}" for item, qty in sorted(citizen.kit.items())),
+                    )
+                ],
+            )
         if not app.save_data.vault.settings.seen_run_help:
             self.help_overlay = True
             app.save_data.vault.settings.seen_run_help = True
@@ -166,7 +183,7 @@ class RunScene(Scene):
 
         controls = split_columns(
             pygame.Rect(self.bottom_rect.left + 8, self.bottom_rect.top + 10, self.bottom_rect.width - 16, self.bottom_rect.height - 20),
-            [2.2, 1, 1, 1, 1],
+            [2.1, 1, 1, 1, 1, 1],
             gap=10,
         )
         self.buttons.append(
@@ -199,6 +216,15 @@ class RunScene(Scene):
         self.buttons.append(
             Button(
                 controls[3],
+                "Use Aid",
+                hotkey=pygame.K_e,
+                on_click=lambda: self._use_healing(app),
+                tooltip="Consume one medical item from inventory to treat injuries.",
+            )
+        )
+        self.buttons.append(
+            Button(
+                controls[4],
                 "Help",
                 hotkey=pygame.K_h,
                 on_click=lambda: setattr(self, "help_overlay", True),
@@ -207,7 +233,7 @@ class RunScene(Scene):
         )
         self.buttons.append(
             Button(
-                controls[4],
+                controls[5],
                 "Quit",
                 hotkey=pygame.K_q,
                 on_click=lambda: self._quit_desktop(app),
@@ -224,6 +250,29 @@ class RunScene(Scene):
     def _quit_desktop(self, app) -> None:
         self._apply_retreat("Quit to desktop")
         app.quit_after_scene = True
+
+    def _use_healing(self, app) -> None:
+        if not self.state or self.event_overlay or self.result_overlay:
+            return
+        for item_id in ("medkit_small", "med_armband", "antiseptic", "med_supplies"):
+            if int(self.state.inventory.get(item_id, 0)) <= 0:
+                continue
+            rng = DeterministicRNG(seed=self.state.seed, state=self.state.rng_state, calls=self.state.rng_calls)
+            logs, report = apply_outcomes(
+                self.state,
+                [{"removeItems": [{"itemId": item_id, "qty": 1}]}],
+                app.content,
+                rng,
+            )
+            self.state.rng_state = rng.state
+            self.state.rng_calls = rng.calls
+            self._append_logs(app, logs)
+            if abs(report.injury_effective_delta) > 1e-9 or report.notes:
+                self.message = f"Used {item_id.replace('_', ' ')} to treat injuries."
+            else:
+                self.message = f"Used {item_id.replace('_', ' ')} but no treatment was needed."
+            return
+        self.message = "No healing item available in inventory."
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
@@ -349,6 +398,26 @@ class RunScene(Scene):
         tags = ", ".join(loadout["tags"]) if loadout["tags"] else "-"
         draw_text(surface, f"Tags: {tags}", theme.get_font(16), theme.COLOR_TEXT_MUTED, (self.hud_rect.left + 12, y))
         y += 24
+        draw_text(surface, "Body Injuries:", theme.get_font(15, bold=True), theme.COLOR_TEXT, (self.hud_rect.left + 12, y))
+        y += 18
+        for part in ("head", "torso", "left_arm", "right_arm", "left_leg", "right_leg"):
+            value = float(self.state.injuries.get(part, 0.0))
+            if value >= 65:
+                sev = "Severe"
+                color = theme.COLOR_DANGER
+            elif value >= 35:
+                sev = "Moderate"
+                color = theme.COLOR_WARNING
+            elif value >= 12:
+                sev = "Light"
+                color = theme.COLOR_TEXT
+            else:
+                sev = "Clear"
+                color = theme.COLOR_TEXT_MUTED
+            label = part.replace("_", " ").title()
+            draw_text(surface, f"{label}: {sev} ({value:.1f})", theme.get_font(13), color, (self.hud_rect.left + 12, y))
+            y += 16
+        y += 6
         if app.settings["gameplay"].get("show_advanced_overlay", False):
             draw_text(surface, f"RNG state={self.state.rng_state} calls={self.state.rng_calls}", theme.get_font(14), theme.COLOR_TEXT_MUTED, (self.hud_rect.left + 12, y))
             y += 18
@@ -423,6 +492,11 @@ class RunScene(Scene):
             y += 22
         y += 8
         report = result.report
+        injury_parts = ", ".join(
+            f"{part.replace('_', ' ')} {delta:+.1f}"
+            for part, delta in report.injury_part_delta.items()
+            if abs(delta) > 1e-6
+        ) or "-"
         lines = [
             (
                 "Travel delta",
@@ -432,7 +506,7 @@ class RunScene(Scene):
                 "Event delta",
                 f"S {report.meters_delta['stamina']:+.2f}, H {report.meters_delta['hydration']:+.2f}, M {report.meters_delta['morale']:+.2f}",
             ),
-            ("Injury", f"effective {report.injury_effective_delta:+.2f} (raw {report.injury_raw_delta:+.2f})"),
+            ("Injury", f"effective {report.injury_effective_delta:+.2f} (raw {report.injury_raw_delta:+.2f}) | {injury_parts}"),
             ("Items gained", ", ".join(f"{k}x{v}" for k, v in sorted(report.items_gained.items())) or "-"),
             ("Items lost", ", ".join(f"{k}x{v}" for k, v in sorted(report.items_lost.items())) or "-"),
             ("Flags set", ", ".join(sorted(report.flags_set)) or "-"),
@@ -468,7 +542,7 @@ class RunScene(Scene):
             "Stamina/Hydration at 0 or high injury means run ends.",
             "Gear tags unlock event options.",
             "Death/retreat sends a drone to recover part of your gear.",
-            "Controls: C continue, L log, R retreat, Q quit, H help.",
+            "Controls: C continue, L log, R retreat, E use aid, Q quit, H help.",
             "Event modal: number keys or click options.",
         ]
         y = rect.top + 54

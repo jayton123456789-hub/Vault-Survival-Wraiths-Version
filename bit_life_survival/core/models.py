@@ -9,10 +9,19 @@ MeterName = Literal["stamina", "hydration", "morale"]
 ItemSlot = Literal["pack", "armor", "vehicle", "utility", "faction", "consumable"]
 ItemRarity = Literal["common", "uncommon", "rare", "legendary"]
 MaterialName = Literal["scrap", "cloth", "plastic", "metal"]
+BodyPart = Literal["head", "torso", "left_arm", "right_arm", "left_leg", "right_leg"]
 
 RUNNER_EQUIP_SLOTS = ("pack", "armor", "vehicle", "utility1", "utility2", "faction")
 METER_NAMES: tuple[MeterName, MeterName, MeterName] = ("stamina", "hydration", "morale")
 MATERIAL_ITEM_IDS: tuple[MaterialName, MaterialName, MaterialName, MaterialName] = ("scrap", "cloth", "plastic", "metal")
+BODY_PARTS: tuple[BodyPart, BodyPart, BodyPart, BodyPart, BodyPart, BodyPart] = (
+    "head",
+    "torso",
+    "left_arm",
+    "right_arm",
+    "left_leg",
+    "right_leg",
+)
 
 
 class StrictModel(BaseModel):
@@ -156,6 +165,7 @@ class GameState(StrictModel):
     biome_id: str = Field(min_length=1)
     meters: MeterValues = Field(default_factory=MeterValues)
     injury: float = Field(default=0.0, ge=0, le=100)
+    injuries: dict[str, float] = Field(default_factory=lambda: {part: 0.0 for part in BODY_PARTS})
     flags: set[str] = Field(default_factory=set)
     death_flags: set[str] = Field(default_factory=set)
     inventory: dict[str, int] = Field(default_factory=dict)
@@ -182,6 +192,25 @@ class GameState(StrictModel):
             if remaining < 0:
                 raise ValueError(f"Cooldown for '{event_id}' cannot be negative.")
         return cooldowns
+
+    @field_validator("injuries")
+    @classmethod
+    def validate_injuries(cls, injuries: dict[str, float]) -> dict[str, float]:
+        hydrated = {part: 0.0 for part in BODY_PARTS}
+        for part, value in injuries.items():
+            if value < 0:
+                raise ValueError(f"Injury value for '{part}' cannot be negative.")
+            hydrated[part] = float(value)
+        return hydrated
+
+    @model_validator(mode="after")
+    def sync_injury_fields(self) -> "GameState":
+        total = sum(max(0.0, float(v)) for v in self.injuries.values())
+        if total <= 0 and self.injury > 0:
+            self.injuries["torso"] = float(self.injury)
+            total = float(self.injury)
+        self.injury = max(0.0, min(100.0, total))
+        return self
 
 
 class Citizen(StrictModel):
@@ -246,6 +275,15 @@ class SaveData(StrictModel):
 
 def clamp_meter(value: float) -> float:
     return max(0.0, min(100.0, float(value)))
+
+
+def clamp_injury(value: float) -> float:
+    return max(0.0, min(100.0, float(value)))
+
+
+def sync_total_injury(state: GameState) -> float:
+    state.injury = clamp_injury(sum(max(0.0, float(v)) for v in state.injuries.values()))
+    return state.injury
 
 
 def has_owned_item(state: GameState, item_id: str) -> bool:

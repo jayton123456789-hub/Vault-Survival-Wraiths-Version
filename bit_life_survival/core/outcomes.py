@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .loader import ContentBundle
-from .models import GameState, LogEntry, clamp_meter, make_log_entry
+from .models import BODY_PARTS, GameState, LogEntry, clamp_meter, make_log_entry, sync_total_injury
 from .rng import DeterministicRNG, WeightedEntry
 from .travel import apply_death_checks
 
@@ -16,6 +16,7 @@ class OutcomeReport:
     )
     injury_raw_delta: float = 0.0
     injury_effective_delta: float = 0.0
+    injury_part_delta: dict[str, float] = field(default_factory=lambda: {part: 0.0 for part in BODY_PARTS})
     items_gained: dict[str, int] = field(default_factory=dict)
     items_lost: dict[str, int] = field(default_factory=dict)
     flags_set: set[str] = field(default_factory=set)
@@ -28,6 +29,8 @@ class OutcomeReport:
             self.meters_delta[meter_name] += other.meters_delta.get(meter_name, 0.0)
         self.injury_raw_delta += other.injury_raw_delta
         self.injury_effective_delta += other.injury_effective_delta
+        for part in self.injury_part_delta:
+            self.injury_part_delta[part] += other.injury_part_delta.get(part, 0.0)
         for item_id, qty in other.items_gained.items():
             self.items_gained[item_id] = self.items_gained.get(item_id, 0) + qty
         for item_id, qty in other.items_lost.items():
@@ -66,6 +69,60 @@ def _total_injury_resist(state: GameState, content: ContentBundle) -> float:
         if item:
             resist += item.modifiers.injuryResist or 0.0
     return max(0.0, min(0.95, resist))
+
+
+def _pick_injury_part(state: GameState, payload: Any, rng: DeterministicRNG) -> tuple[str, float]:
+    if isinstance(payload, (int, float)):
+        amount = float(payload)
+        part = BODY_PARTS[rng.next_int(0, len(BODY_PARTS))]
+        return part, amount
+    if isinstance(payload, dict):
+        amount = float(payload.get("amount", 0.0))
+        explicit_part = payload.get("part")
+        if explicit_part in BODY_PARTS:
+            return explicit_part, amount
+        part = BODY_PARTS[rng.next_int(0, len(BODY_PARTS))]
+        return part, amount
+    raise ValueError("addInjury payload must be numeric or object.")
+
+
+def _most_injured_part(state: GameState) -> str:
+    ordered = sorted(BODY_PARTS, key=lambda part: state.injuries.get(part, 0.0), reverse=True)
+    return ordered[0]
+
+
+def _apply_targeted_heal(state: GameState, report: OutcomeReport, content: ContentBundle, item_id: str, qty: int) -> None:
+    if qty <= 0:
+        return
+    heal_targets: list[tuple[str, float]] = []
+    if item_id == "medkit_small":
+        part = _most_injured_part(state)
+        heal_targets.append((part, 12.0 * qty))
+    elif item_id == "med_armband":
+        heal_targets.append(("left_arm", 8.0 * qty))
+        heal_targets.append(("right_arm", 8.0 * qty))
+    elif item_id == "antiseptic":
+        heal_targets.append(("torso", 6.0 * qty))
+    elif item_id == "med_supplies":
+        part = _most_injured_part(state)
+        heal_targets.append((part, 7.0 * qty))
+    if not heal_targets:
+        return
+    for part, amount in heal_targets:
+        if amount <= 0:
+            continue
+        before = state.injuries.get(part, 0.0)
+        healed = min(before, amount)
+        if healed <= 0:
+            continue
+        state.injuries[part] = max(0.0, before - healed)
+        report.injury_raw_delta -= healed
+        report.injury_effective_delta -= healed
+        report.injury_part_delta[part] -= healed
+        item = content.item_by_id.get(item_id)
+        label = item.name if item else item_id
+        report.notes.append(f"{label} healed {part.replace('_', ' ')} by {healed:.1f}.")
+    sync_total_injury(state)
 
 
 def _format_item_counts(items: dict[str, int], content: ContentBundle) -> str:
@@ -146,6 +203,7 @@ def apply_outcomes(
 
                 if removed > 0:
                     _increment_counter(report.items_lost, item_id, removed)
+                    _apply_targeted_heal(state, report, content, item_id, removed)
 
         elif op == "setFlags":
             for flag in value:
@@ -167,16 +225,19 @@ def apply_outcomes(
                 report.meters_delta[meter_name] = report.meters_delta.get(meter_name, 0.0) + delta_value
 
         elif op == "addInjury":
-            delta = float(value)
+            part, delta = _pick_injury_part(state, value, rng)
             resist = _total_injury_resist(state, content)
             effective_delta = delta if delta < 0 else delta * (1.0 - resist)
-            state.injury = max(0.0, min(100.0, state.injury + effective_delta))
+            current_part = float(state.injuries.get(part, 0.0))
+            state.injuries[part] = max(0.0, min(100.0, current_part + effective_delta))
+            sync_total_injury(state)
             report.injury_raw_delta += delta
             report.injury_effective_delta += effective_delta
+            report.injury_part_delta[part] += effective_delta
             if delta > 0 and resist > 0:
                 prevented = delta - effective_delta
                 report.notes.append(
-                    f"Injury resistance reduced incoming injury by {prevented:.2f}."
+                    f"Injury resistance reduced incoming injury by {prevented:.2f} ({part.replace('_', ' ')})."
                 )
 
         elif op == "setDeathChance":
@@ -217,10 +278,16 @@ def apply_outcomes(
         )
 
     if abs(report.injury_effective_delta) > 1e-9:
+        part_bits = []
+        for part in BODY_PARTS:
+            delta = report.injury_part_delta.get(part, 0.0)
+            if abs(delta) > 1e-9:
+                part_bits.append(f"{part.replace('_', ' ')} {delta:+.1f}")
+        part_text = f" Affected: {', '.join(part_bits)}." if part_bits else ""
         if report.injury_effective_delta > 0:
-            injury_line = f"You were hurt (+{report.injury_effective_delta:.1f} injury)."
+            injury_line = f"You were hurt (+{report.injury_effective_delta:.1f} injury).{part_text}"
         else:
-            injury_line = f"You recovered ({report.injury_effective_delta:+.1f} injury)."
+            injury_line = f"You recovered ({report.injury_effective_delta:+.1f} injury).{part_text}"
         logs.append(
             make_log_entry(
                 state,
