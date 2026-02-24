@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+
 import pygame
 
 from bit_life_survival.app.ui import theme
-from bit_life_survival.app.ui.avatar import draw_citizen_avatar
+from bit_life_survival.app.ui.claw_room import ClawRoom
 from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 from bit_life_survival.core.crafting import can_craft, craft
 from bit_life_survival.core.models import GameState
 from bit_life_survival.core.persistence import draft_citizen_from_claw, draft_selected_citizen, refill_citizen_queue, storage_used
+from bit_life_survival.core.rng import DeterministicRNG
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
@@ -32,29 +35,89 @@ class BaseScene(Scene):
         self.selected_slot_filter = "all"
         self.selected_rarity_filter = "all"
 
-        self.citizen_scroll: ScrollList | None = None
-        self._citizen_rows: list[str] = []
-        self.selected_citizen_index: int | None = None
-
         self.crafting_scroll: ScrollList | None = None
         self._recipe_ids: list[str] = []
         self.selected_recipe_id: str | None = None
-        self.help_overlay = False
 
+        self.help_overlay = False
+        self.claw_room = ClawRoom()
+        self._pending_claw_target_id: str | None = None
+        self._claw_room_panel = pygame.Rect(0, 0, 0, 0)
+        self._left_detail_rect = pygame.Rect(0, 0, 0, 0)
+        self._right_top_rect = pygame.Rect(0, 0, 0, 0)
+        self._right_bottom_rect = pygame.Rect(0, 0, 0, 0)
         self._top_rect = pygame.Rect(0, 0, 0, 0)
         self._left_rect = pygame.Rect(0, 0, 0, 0)
         self._center_rect = pygame.Rect(0, 0, 0, 0)
         self._right_rect = pygame.Rect(0, 0, 0, 0)
         self._bottom_rect = pygame.Rect(0, 0, 0, 0)
-        self._citizen_detail_rect = pygame.Rect(0, 0, 0, 0)
         self._materials_rect = pygame.Rect(0, 0, 0, 0)
+
+    def _selected_citizen(self, app):
+        selected_id = self.claw_room.selected_id
+        if not selected_id:
+            return None
+        for citizen in app.save_data.vault.citizen_queue:
+            if citizen.id == selected_id:
+                return citizen
+        return None
+
+    def _predict_claw_target_id(self, app) -> str | None:
+        queue = app.save_data.vault.citizen_queue
+        if not queue:
+            return None
+        vault = app.save_data.vault
+        rng = DeterministicRNG(
+            seed=vault.settings.base_seed,
+            state=vault.claw_rng_state,
+            calls=vault.claw_rng_calls,
+        )
+        window = min(5, len(queue))
+        idx = rng.next_int(0, max(1, window))
+        return queue[idx].id
+
+    def _start_claw_draft(self, app) -> None:
+        if self.claw_room.is_animating:
+            self.message = "Claw is already moving."
+            return
+        target_id = self._predict_claw_target_id(app)
+        if target_id is None:
+            self.message = "No citizens in queue."
+            return
+        if self.claw_room.start_grab(target_id):
+            self._pending_claw_target_id = target_id
+            target = next((c for c in app.save_data.vault.citizen_queue if c.id == target_id), None)
+            label = target.name if target else "target"
+            self.message = f"Claw locking onto {label}..."
+
+    def _finalize_claw_draft(self, app, expected_id: str | None) -> None:
+        drafted = draft_citizen_from_claw(app.save_data.vault, preview_count=5)
+        app.current_loadout = drafted.loadout.model_copy(deep=True)
+        app.save_current_slot()
+        self.claw_room.selected_id = drafted.id
+        if expected_id and drafted.id != expected_id:
+            self.message = f"Claw grabbed {drafted.name}."
+        else:
+            self.message = f"Drafted {drafted.name}."
+        self._pending_claw_target_id = None
+
+    def _draft_selected(self, app) -> None:
+        if self.claw_room.is_animating:
+            self.message = "Wait for claw animation to finish."
+            return
+        selected = self._selected_citizen(app)
+        if selected is None:
+            self.message = "Click a citizen in the claw room first."
+            return
+        drafted = draft_selected_citizen(app.save_data.vault, selected.id)
+        app.current_loadout = drafted.loadout.model_copy(deep=True)
+        app.save_current_slot()
+        self.claw_room.selected_id = drafted.id
+        self.message = f"Drafted {drafted.name} from room."
 
     def _deploy(self, app) -> None:
         if app.save_data.vault.current_citizen is None:
             self.message = "Step 1: Draft a citizen with Use The Claw."
-            return
-        if app.current_slot is None:
-            self.message = "No save slot loaded."
             return
         seed = app.compute_run_seed()
         app.save_data.vault.last_run_seed = seed
@@ -79,44 +142,6 @@ class BaseScene(Scene):
         from .menu import MainMenuScene
 
         app.change_scene(MainMenuScene())
-
-    def _claw(self, app) -> None:
-        drafted = draft_citizen_from_claw(app.save_data.vault, preview_count=5)
-        app.current_loadout = drafted.loadout.model_copy(deep=True)
-        app.save_current_slot()
-        self.message = f"Drafted {drafted.name}. Next: open Loadout or press Deploy."
-
-    def _draft_selected(self, app) -> None:
-        if self.selected_citizen_index is None:
-            self.message = "Select a citizen from the line first."
-            return
-        queue = app.save_data.vault.citizen_queue
-        if self.selected_citizen_index < 0 or self.selected_citizen_index >= len(queue):
-            self.message = "Selected citizen is no longer available."
-            return
-        drafted = draft_selected_citizen(app.save_data.vault, queue[self.selected_citizen_index].id)
-        app.current_loadout = drafted.loadout.model_copy(deep=True)
-        app.save_current_slot()
-        self.message = f"Drafted {drafted.name} from queue."
-        self._refresh_citizen_rows(app)
-
-    def _refresh_citizen_rows(self, app) -> None:
-        queue = app.save_data.vault.citizen_queue
-        self._citizen_rows = [citizen.name for citizen in queue]
-        if self.citizen_scroll:
-            self.citizen_scroll.set_items(self._citizen_rows)
-        if self.selected_citizen_index is not None and self.selected_citizen_index >= len(queue):
-            self.selected_citizen_index = None
-
-    def _on_select_citizen(self, index: int) -> None:
-        if 0 <= index < len(self._citizen_rows):
-            self.selected_citizen_index = index
-
-    def _selected_citizen(self, app):
-        if self.selected_citizen_index is not None:
-            if 0 <= self.selected_citizen_index < len(app.save_data.vault.citizen_queue):
-                return app.save_data.vault.citizen_queue[self.selected_citizen_index]
-        return None
 
     def _cycle_storage_filter(self, app, which: str) -> None:
         if which == "slot":
@@ -147,23 +172,12 @@ class BaseScene(Scene):
             rows.append((item_id, qty))
         self._storage_rows = rows
         if self.storage_scroll:
-            self.storage_scroll.set_items([f"{app.content.item_by_id[item_id].name} x{qty}" for item_id, qty in rows])
+            lines = [f"{app.content.item_by_id[item_id].name} x{qty}" for item_id, qty in rows]
+            self.storage_scroll.set_items(lines)
 
     def _on_storage_select(self, index: int) -> None:
         if 0 <= index < len(self._storage_rows):
             self.selected_storage_item_id = self._storage_rows[index][0]
-
-    def _craft_recipe(self, app, recipe_id: str) -> None:
-        recipe = app.content.recipe_by_id.get(recipe_id)
-        if recipe is None:
-            self.message = f"Recipe '{recipe_id}' missing."
-            return
-        if not craft(app.save_data.vault, recipe):
-            self.message = f"Missing materials for {recipe.name}."
-            return
-        app.save_current_slot()
-        self._refresh_storage_rows(app)
-        self.message = f"Crafted {recipe.output_qty}x {recipe.name}."
 
     def _refresh_recipe_rows(self, app) -> None:
         self._recipe_ids = [recipe.id for recipe in app.content.recipes]
@@ -182,125 +196,257 @@ class BaseScene(Scene):
         if not self.selected_recipe_id:
             self.message = "Select a recipe first."
             return
-        self._craft_recipe(app, self.selected_recipe_id)
-
-    def _draw_citizen_row(self, app, surface: pygame.Surface, row_rect: pygame.Rect, index: int, _text: str, selected: bool, now_s: float) -> None:
-        if index < 0 or index >= len(app.save_data.vault.citizen_queue):
+        recipe = app.content.recipe_by_id.get(self.selected_recipe_id)
+        if recipe is None:
+            self.message = "Recipe missing."
             return
-        citizen = app.save_data.vault.citizen_queue[index]
-        avatar_rect = pygame.Rect(row_rect.left + 4, row_rect.top + 2, row_rect.height - 4, row_rect.height - 4)
-        draw_citizen_avatar(surface, avatar_rect, citizen.id, citizen.name, selected=selected, time_s=now_s)
-        draw_text(surface, f"{index + 1:02d}. {citizen.name}", theme.get_font(15, bold=True), theme.COLOR_TEXT, (avatar_rect.right + 8, row_rect.top + 6))
-        quirk = citizen.quirk if len(citizen.quirk) <= 28 else citizen.quirk[:25] + "..."
-        draw_text(surface, quirk, theme.get_font(12), theme.COLOR_TEXT_MUTED, (avatar_rect.right + 8, row_rect.top + 22))
+        if not craft(app.save_data.vault, recipe):
+            self.message = f"Missing materials for {recipe.name}."
+            return
+        self.message = f"Crafted {recipe.output_qty}x {recipe.name}."
+        app.save_current_slot()
+        self._refresh_storage_rows(app)
 
     def _build_layout(self, app) -> None:
         if self._last_size == app.screen.get_size() and self.buttons:
             return
         self._last_size = app.screen.get_size()
         self.buttons = []
-
-        root = app.screen.get_rect().inflate(-16, -16)
-        rows = split_rows(root, [0.15, 0.73, 0.12], gap=8)
-        body_cols = split_columns(rows[1], [0.30, 0.40, 0.30], gap=8)
-        self._top_rect, self._bottom_rect = rows[0], rows[2]
-        self._left_rect, self._center_rect, self._right_rect = body_cols
-
-        left_inner = pygame.Rect(self._left_rect.left + 10, self._left_rect.top + 36, self._left_rect.width - 20, self._left_rect.height - 46)
-        left_rows = split_rows(left_inner, [0.60, 0.24, 0.16], gap=8)
-        list_zone, self._citizen_detail_rect, action_zone = left_rows
-
-        list_label_rect = pygame.Rect(list_zone.left, list_zone.top, list_zone.width, 20)
-        self._citizen_header_rect = list_label_rect
-        citizen_scroll_rect = pygame.Rect(list_zone.left, list_zone.top + 22, list_zone.width, list_zone.height - 22)
-        self.citizen_scroll = ScrollList(
-            citizen_scroll_rect,
-            row_height=38,
-            on_select=self._on_select_citizen,
-            row_renderer=lambda surface, row_rect, idx, text, sel, now: self._draw_citizen_row(app, surface, row_rect, idx, text, sel, now),
-        )
-        self._refresh_citizen_rows(app)
-
-        action_rows = split_rows(action_zone, [1, 1], gap=8)
-        draft_button = Button(action_rows[0], "Draft Selected", hotkey=pygame.K_RETURN, on_click=lambda: self._draft_selected(app), tooltip="Draft highlighted citizen.")
-        claw_button = Button(action_rows[1], "Use The Claw", hotkey=pygame.K_u, on_click=lambda: self._claw(app), tooltip="Random draft from front of queue.")
-        draft_button.bg = (70, 102, 90)
-        claw_button.bg = (84, 112, 102)
-        draft_button.bg_hover = (110, 150, 130)
-        claw_button.bg_hover = (120, 154, 138)
-        self.buttons.extend([draft_button, claw_button])
-
-        center_inner = pygame.Rect(self._center_rect.left + 10, self._center_rect.top + 36, self._center_rect.width - 20, self._center_rect.height - 46)
-        module_tabs_row = pygame.Rect(center_inner.left, center_inner.top, center_inner.width, 42)
-        module_content = pygame.Rect(center_inner.left, center_inner.top + 50, center_inner.width, center_inner.height - 50)
-        module_cols = split_columns(module_tabs_row, [1, 1, 1], gap=8)
-        storage_btn = Button(module_cols[0], "Storage", on_click=lambda: setattr(self, "selected_module", "storage"), tooltip="Manage gear inventory.")
-        crafting_btn = Button(module_cols[1], "Crafting", on_click=lambda: setattr(self, "selected_module", "crafting"), tooltip="Craft from materials.")
-        drone_btn = Button(module_cols[2], "Drone Bay", on_click=lambda: setattr(self, "selected_module", "drone"), tooltip="Recovery readiness.")
-        for b in (storage_btn, crafting_btn, drone_btn):
-            b.bg = (80, 108, 95)
-            b.bg_hover = (112, 146, 132)
-        self.buttons.extend([storage_btn, crafting_btn, drone_btn])
-
         self.storage_scroll = None
         self.crafting_scroll = None
-        self._materials_rect = pygame.Rect(0, 0, 0, 0)
-        self._module_hint_rect = pygame.Rect(0, 0, 0, 0)
+
+        root = app.screen.get_rect().inflate(-16, -16)
+        top, body, bottom = split_rows(root, [0.16, 0.72, 0.12], gap=8)
+        left, center, right = split_columns(body, [0.31, 0.39, 0.30], gap=8)
+        self._top_rect, self._bottom_rect = top, bottom
+        self._left_rect, self._center_rect, self._right_rect = left, center, right
+
+        left_inner = pygame.Rect(left.left + 10, left.top + 36, left.width - 20, left.height - 46)
+        room_panel, detail_panel, action_panel = split_rows(left_inner, [0.60, 0.24, 0.16], gap=8)
+        self._claw_room_panel = room_panel
+        self._left_detail_rect = detail_panel
+
+        action_rows = split_rows(action_panel, [1, 1], gap=8)
+        draft_btn = Button(action_rows[0], "Draft Selected", hotkey=pygame.K_RETURN, on_click=lambda: self._draft_selected(app), tooltip="Draft selected citizen.")
+        claw_btn = Button(action_rows[1], "Use The Claw", hotkey=pygame.K_u, on_click=lambda: self._start_claw_draft(app), tooltip="Run claw machine draft.")
+        draft_btn.bg = (70, 102, 90)
+        draft_btn.bg_hover = (108, 146, 128)
+        claw_btn.bg = (84, 112, 102)
+        claw_btn.bg_hover = (122, 158, 140)
+        self.buttons.extend([draft_btn, claw_btn])
+
+        center_inner = pygame.Rect(center.left + 10, center.top + 36, center.width - 20, center.height - 46)
+        tab_row = pygame.Rect(center_inner.left, center_inner.top, center_inner.width, 40)
+        content_rect = pygame.Rect(center_inner.left, center_inner.top + 48, center_inner.width, center_inner.height - 48)
+        tab_cols = split_columns(tab_row, [1, 1, 1], gap=8)
+        self.buttons.extend(
+            [
+                Button(tab_cols[0], "Storage", on_click=lambda: setattr(self, "selected_module", "storage"), tooltip="Gear storage and filters."),
+                Button(tab_cols[1], "Crafting", on_click=lambda: setattr(self, "selected_module", "crafting"), tooltip="Craft from materials."),
+                Button(tab_cols[2], "Drone Bay", on_click=lambda: setattr(self, "selected_module", "drone"), tooltip="Recovery system status."),
+            ]
+        )
 
         if self.selected_module == "storage":
-            module_rows = split_rows(module_content, [0.15, 0.12, 0.73], gap=8)
-            self._materials_rect, filter_rect, list_rect = module_rows
-            filter_cols = split_columns(filter_rect, [1, 1], gap=8)
-            self.buttons.append(
-                Button(
-                    filter_cols[0],
-                    f"Slot: {self.selected_slot_filter}",
-                    on_click=lambda: self._cycle_storage_filter(app, "slot"),
-                    tooltip="Cycle slot filter.",
-                )
+            mat_row, filter_row, list_row = split_rows(content_rect, [0.18, 0.14, 0.68], gap=8)
+            self._materials_rect = mat_row
+            filter_cols = split_columns(filter_row, [1, 1], gap=8)
+            self.buttons.append(Button(filter_cols[0], f"Slot: {self.selected_slot_filter}", on_click=lambda: self._cycle_storage_filter(app, "slot"), tooltip="Cycle slot filter."))
+            self.buttons.append(Button(filter_cols[1], f"Rarity: {self.selected_rarity_filter}", on_click=lambda: self._cycle_storage_filter(app, "rarity"), tooltip="Cycle rarity filter."))
+            self.storage_scroll = ScrollList(
+                list_row,
+                row_height=38,
+                on_select=self._on_storage_select,
+                row_renderer=lambda surf, rr, idx, text, selected, now: self._draw_storage_row(app, surf, rr, idx, text, selected),
             )
-            self.buttons.append(
-                Button(
-                    filter_cols[1],
-                    f"Rarity: {self.selected_rarity_filter}",
-                    on_click=lambda: self._cycle_storage_filter(app, "rarity"),
-                    tooltip="Cycle rarity filter.",
-                )
-            )
-            self.storage_scroll = ScrollList(list_rect, row_height=30, on_select=self._on_storage_select)
             self._refresh_storage_rows(app)
-            self._module_hint_rect = pygame.Rect(filter_rect.left, filter_rect.bottom + 2, filter_rect.width, 14)
         elif self.selected_module == "crafting":
-            module_rows = split_rows(module_content, [0.82, 0.18], gap=8)
-            self.crafting_scroll = ScrollList(module_rows[0], row_height=30, on_select=self._on_recipe_select)
+            list_row, button_row = split_rows(content_rect, [0.84, 0.16], gap=8)
+            self.crafting_scroll = ScrollList(list_row, row_height=30, on_select=self._on_recipe_select)
             self._refresh_recipe_rows(app)
             recipe = app.content.recipe_by_id.get(self.selected_recipe_id) if self.selected_recipe_id else None
             craftable = bool(recipe and can_craft(app.save_data.vault, recipe)[0])
-            craft_btn = Button(module_rows[1], "Craft Selected", hotkey=pygame.K_RETURN, enabled=craftable, on_click=lambda: self._craft_selected(app), tooltip="Craft selected recipe.")
+            craft_btn = Button(button_row, "Craft Selected", hotkey=pygame.K_RETURN, enabled=craftable, on_click=lambda: self._craft_selected(app), tooltip="Craft selected recipe.")
             craft_btn.bg = (82, 114, 102)
-            craft_btn.bg_hover = (118, 156, 138)
+            craft_btn.bg_hover = (120, 156, 138)
             self.buttons.append(craft_btn)
-        else:
-            self._module_hint_rect = module_content
+
+        right_inner = pygame.Rect(right.left + 10, right.top + 36, right.width - 20, right.height - 46)
+        self._right_top_rect, self._right_bottom_rect = split_rows(right_inner, [0.38, 0.62], gap=8)
 
         bottom_cols = split_columns(
-            pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top + 8, self._bottom_rect.width - 16, self._bottom_rect.height - 16),
+            pygame.Rect(bottom.left + 8, bottom.top + 8, bottom.width - 16, bottom.height - 16),
             [1, 1, 1, 1],
             gap=8,
         )
-        loadout_btn = Button(bottom_cols[0], "Loadout", hotkey=pygame.K_l, on_click=lambda: self._open_loadout(app), tooltip="Configure equipment.")
-        deploy_btn = Button(bottom_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), tooltip="Begin briefing and run.")
+        loadout_btn = Button(bottom_cols[0], "Loadout", hotkey=pygame.K_l, on_click=lambda: self._open_loadout(app), tooltip="Open loadout.")
+        deploy_btn = Button(bottom_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), tooltip="Start briefing and run.")
         settings_btn = Button(bottom_cols[2], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), tooltip="Open settings.")
-        menu_btn = Button(bottom_cols[3], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._main_menu(app), tooltip="Return to front menu.")
+        menu_btn = Button(bottom_cols[3], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._main_menu(app), tooltip="Return to menu.")
         loadout_btn.bg = (86, 112, 98)
-        deploy_btn.bg = (78, 124, 92)
+        deploy_btn.bg = (76, 124, 92)
         settings_btn.bg = (86, 106, 112)
         menu_btn.bg = (116, 72, 82)
-        loadout_btn.bg_hover = (114, 152, 132)
-        deploy_btn.bg_hover = (108, 164, 122)
-        settings_btn.bg_hover = (116, 142, 152)
-        menu_btn.bg_hover = (150, 94, 106)
+        loadout_btn.bg_hover = (120, 152, 132)
+        deploy_btn.bg_hover = (106, 162, 122)
+        settings_btn.bg_hover = (118, 142, 152)
+        menu_btn.bg_hover = (154, 96, 110)
         self.buttons.extend([loadout_btn, deploy_btn, settings_btn, menu_btn])
+
+    def _draw_storage_row(
+        self,
+        app,
+        surface: pygame.Surface,
+        row_rect: pygame.Rect,
+        index: int,
+        _text: str,
+        selected: bool,
+    ) -> None:
+        if index < 0 or index >= len(self._storage_rows):
+            return
+        item_id, qty = self._storage_rows[index]
+        item = app.content.item_by_id.get(item_id)
+        icon_rect = pygame.Rect(row_rect.left + 5, row_rect.top + 5, row_rect.height - 10, row_rect.height - 10)
+        self._draw_item_icon(surface, icon_rect, item_id)
+        name = item.name if item else item_id
+        label_color = theme.COLOR_TEXT if not selected else (242, 245, 232)
+        draw_text(surface, f"{name}", theme.get_font(15, bold=True), label_color, (icon_rect.right + 8, row_rect.top + 5))
+        meta = f"{item.rarity if item else 'common'} | {item.slot if item else 'item'}"
+        draw_text(surface, meta, theme.get_font(12), theme.COLOR_TEXT_MUTED, (icon_rect.right + 8, row_rect.top + 20))
+        draw_text(surface, f"x{qty}", theme.get_font(14, bold=True), theme.COLOR_TEXT, (row_rect.right - 8, row_rect.centery), "midright")
+
+    def _draw_item_icon(self, surface: pygame.Surface, rect: pygame.Rect, item_id: str) -> None:
+        digest = hashlib.sha256(item_id.encode("utf-8")).digest()
+        outer = (52 + digest[0] % 80, 44 + digest[1] % 70, 64 + digest[2] % 70)
+        inner = (96 + digest[3] % 100, 92 + digest[4] % 100, 106 + digest[5] % 90)
+        pygame.draw.rect(surface, outer, rect, border_radius=2)
+        inset = rect.inflate(-4, -4)
+        pygame.draw.rect(surface, inner, inset, border_radius=2)
+        shape = digest[6] % 3
+        if shape == 0:
+            pygame.draw.circle(surface, (220, 210, 178), inset.center, max(2, inset.width // 3))
+        elif shape == 1:
+            pygame.draw.rect(surface, (220, 210, 178), pygame.Rect(inset.left + 2, inset.top + 2, inset.width - 4, inset.height - 4), width=2)
+        else:
+            pygame.draw.line(surface, (220, 210, 178), (inset.left + 2, inset.bottom - 2), (inset.right - 2, inset.top + 2), 2)
+
+    def _draw_top_bar(self, app, surface: pygame.Surface) -> None:
+        vault = app.save_data.vault
+        used = storage_used(vault)
+        line1 = f"Vault Lv {vault.vault_level}    TAV {vault.tav}    Drone Bay {int(vault.upgrades.get('drone_bay_level', 0))}    Storage Used {used}"
+        draw_text(surface, line1, theme.get_font(22, bold=True), theme.COLOR_TEXT, (self._top_rect.left + 14, self._top_rect.top + 52))
+
+    def _draw_materials_row(self, app, surface: pygame.Surface) -> None:
+        draw_text(surface, "Materials Pouch", theme.get_font(15, bold=True), theme.COLOR_TEXT_MUTED, (self._materials_rect.left + 6, self._materials_rect.top + 4))
+        row = pygame.Rect(self._materials_rect.left, self._materials_rect.top + 22, self._materials_rect.width, self._materials_rect.height - 24)
+        cols = split_columns(row, [1, 1, 1, 1], gap=8)
+        for col, mid in zip(cols, MATERIAL_IDS):
+            pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, col, border_radius=2)
+            pygame.draw.rect(surface, theme.COLOR_BORDER, col, width=2, border_radius=2)
+            draw_text(surface, f"{mid.title()} {app.save_data.vault.materials.get(mid, 0)}", theme.get_font(15, bold=True), theme.COLOR_TEXT, col.center, "center")
+
+    def _draw_left_detail(self, app, surface: pygame.Surface) -> None:
+        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._left_detail_rect, border_radius=2)
+        pygame.draw.rect(surface, theme.COLOR_BORDER, self._left_detail_rect, width=2, border_radius=2)
+        y = self._left_detail_rect.top + 8
+        selected = self._selected_citizen(app)
+        draw_text(surface, "Citizen Detail", theme.get_font(15, bold=True), theme.COLOR_TEXT, (self._left_detail_rect.left + 8, y))
+        y += 18
+        if selected:
+            draw_text(surface, selected.name, theme.get_font(15, bold=True), theme.COLOR_SUCCESS, (self._left_detail_rect.left + 8, y))
+            y += 16
+            for line in wrap_text(selected.quirk, theme.get_font(12), self._left_detail_rect.width - 16)[:2]:
+                draw_text(surface, line, theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._left_detail_rect.left + 8, y))
+                y += 14
+        else:
+            draw_text(surface, "Click a citizen in the room.", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._left_detail_rect.left + 8, y))
+            y += 14
+        current = app.save_data.vault.current_citizen
+        label = current.name if current else "None"
+        draw_text(surface, f"Current Draft: {label}", theme.get_font(12, bold=True), theme.COLOR_TEXT, (self._left_detail_rect.left + 8, self._left_detail_rect.bottom - 14))
+
+    def _draw_right_panel(self, app, surface: pygame.Surface) -> None:
+        # Onboarding card
+        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._right_top_rect, border_radius=2)
+        pygame.draw.rect(surface, theme.COLOR_BORDER, self._right_top_rect, width=2, border_radius=2)
+        y = self._right_top_rect.top + 8
+        draw_text(surface, "What To Do Next", theme.get_font(18, bold=True), theme.COLOR_TEXT, (self._right_top_rect.left + 8, y))
+        y += 24
+        has_citizen = app.save_data.vault.current_citizen is not None
+        has_loadout = any(bool(v) for v in app.current_loadout.model_dump(mode="python").values())
+        steps = [
+            ("Draft a citizen", has_citizen),
+            ("Open Loadout and equip gear", has_loadout),
+            ("Press Deploy to start run", has_citizen),
+        ]
+        for text, done in steps:
+            prefix = "[OK]" if done else "[  ]"
+            color = theme.COLOR_SUCCESS if done else theme.COLOR_TEXT
+            draw_text(surface, f"{prefix} {text}", theme.get_font(14, bold=done), color, (self._right_top_rect.left + 8, y))
+            y += 18
+        if not has_citizen:
+            draw_text(surface, "Tip: Use The Claw to draft.", theme.get_font(13), theme.COLOR_WARNING, (self._right_top_rect.left + 8, self._right_top_rect.bottom - 16))
+
+        # Lower detail panel
+        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._right_bottom_rect, border_radius=2)
+        pygame.draw.rect(surface, theme.COLOR_BORDER, self._right_bottom_rect, width=2, border_radius=2)
+
+        if self.selected_module == "storage" and self.selected_storage_item_id:
+            item = app.content.item_by_id.get(self.selected_storage_item_id)
+            if item:
+                y = self._right_bottom_rect.top + 8
+                draw_text(surface, item.name, theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._right_bottom_rect.left + 8, y))
+                y += 20
+                draw_text(surface, f"{item.rarity} | {item.slot}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._right_bottom_rect.left + 8, y))
+                y += 14
+                tags = ", ".join(item.tags) if item.tags else "-"
+                for line in wrap_text(f"Tags: {tags}", theme.get_font(12), self._right_bottom_rect.width - 16):
+                    draw_text(surface, line, theme.get_font(12), theme.COLOR_TEXT, (self._right_bottom_rect.left + 8, y))
+                    y += 14
+                y += 4
+                mods = item.modifiers.model_dump(mode="python", exclude_none=True)
+                for key, value in mods.items():
+                    draw_text(surface, f"{key}: {value:+.2f}" if isinstance(value, float) else f"{key}: {value}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._right_bottom_rect.left + 8, y))
+                    y += 14
+                return
+
+        if self.selected_module == "crafting" and self.selected_recipe_id:
+            recipe = app.content.recipe_by_id.get(self.selected_recipe_id)
+            if recipe:
+                craftable, requirements = can_craft(app.save_data.vault, recipe)
+                y = self._right_bottom_rect.top + 8
+                draw_text(surface, recipe.name, theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._right_bottom_rect.left + 8, y))
+                y += 20
+                for material_id, (have, need) in requirements.items():
+                    color = theme.COLOR_SUCCESS if have >= need else theme.COLOR_WARNING
+                    draw_text(surface, f"{material_id.title()}: {have}/{need}", theme.get_font(12, bold=True), color, (self._right_bottom_rect.left + 8, y))
+                    y += 14
+                y += 4
+                draw_text(surface, "Craftable" if craftable else "Missing materials", theme.get_font(12, bold=True), theme.COLOR_SUCCESS if craftable else theme.COLOR_WARNING, (self._right_bottom_rect.left + 8, y))
+                return
+
+        preview_state = GameState(seed=0, biome_id="suburbs", rng_state=1, rng_calls=0, equipped=app.current_loadout.model_copy(deep=True))
+        summary = compute_loadout_summary(preview_state, app.content)
+        y = self._right_bottom_rect.top + 8
+        draw_text(surface, "Loadout Preview", theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._right_bottom_rect.left + 8, y))
+        y += 20
+        for slot_name, item_id in app.current_loadout.model_dump(mode="python").items():
+            draw_text(surface, f"{slot_name}: {item_id or '-'}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._right_bottom_rect.left + 8, y))
+            y += 14
+        y += 4
+        draw_text(surface, f"Tags: {', '.join(summary['tags']) if summary['tags'] else '-'}", theme.get_font(12), theme.COLOR_TEXT, (self._right_bottom_rect.left + 8, y))
+        y += 14
+        draw_text(surface, f"Speed {summary['speed_bonus']:+.2f}  Carry {summary['carry_bonus']:+.1f}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._right_bottom_rect.left + 8, y))
+
+    def update(self, app, dt: float) -> None:
+        if app.save_data is None:
+            return
+        refill_citizen_queue(app.save_data.vault, target_size=12)
+        self.claw_room.sync(app.save_data.vault.citizen_queue)
+        self.claw_room.update(dt)
+        finished_target = self.claw_room.consume_finished_target()
+        if finished_target is not None:
+            self._finalize_claw_draft(app, expected_id=finished_target)
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
@@ -314,9 +460,12 @@ class BaseScene(Scene):
         if event.type == pygame.KEYDOWN and event.key == pygame.K_h:
             self.help_overlay = True
             return
-        if self.storage_scroll and self.storage_scroll.handle_event(event):
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._claw_room_panel.collidepoint(event.pos):
+            self.claw_room.pick_actor(event.pos)
             return
-        if self.citizen_scroll and self.citizen_scroll.handle_event(event):
+
+        if self.storage_scroll and self.storage_scroll.handle_event(event):
             return
         if self.crafting_scroll and self.crafting_scroll.handle_event(event):
             return
@@ -325,187 +474,14 @@ class BaseScene(Scene):
                 self._last_size = None
                 return
 
-    def _draw_top_bar(self, app, surface: pygame.Surface) -> None:
-        vault = app.save_data.vault
-        used = storage_used(vault)
-        left_line = f"Vault Lv {vault.vault_level}    TAV {vault.tav}    Drone Bay {int(vault.upgrades.get('drone_bay_level', 0))}    Storage Used {used}"
-        mats = vault.materials
-        right_line = f"Scrap {mats.get('scrap', 0)}   Cloth {mats.get('cloth', 0)}   Plastic {mats.get('plastic', 0)}   Metal {mats.get('metal', 0)}"
-        draw_text(surface, left_line, theme.get_font(20, bold=True), theme.COLOR_TEXT, (self._top_rect.left + 14, self._top_rect.top + 42))
-        draw_text(surface, right_line, theme.get_font(19, bold=True), theme.COLOR_TEXT_MUTED, (self._top_rect.left + 14, self._top_rect.top + 68))
-
-    def _draw_materials_pouch(self, app, surface: pygame.Surface) -> None:
-        draw_text(surface, "Materials Pouch", theme.get_font(14, bold=True), theme.COLOR_TEXT_MUTED, (self._materials_rect.left + 6, self._materials_rect.top + 4))
-        row = pygame.Rect(self._materials_rect.left, self._materials_rect.top + 20, self._materials_rect.width, self._materials_rect.height - 20)
-        cols = split_columns(row, [1, 1, 1, 1], gap=8)
-        for col, mid in zip(cols, MATERIAL_IDS):
-            pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, col, border_radius=2)
-            pygame.draw.rect(surface, theme.COLOR_BORDER, col, width=2, border_radius=2)
-            draw_text(surface, f"{mid.title()} {app.save_data.vault.materials.get(mid, 0)}", theme.get_font(15, bold=True), theme.COLOR_TEXT, col.center, "center")
-
-    def _draw_storage_module(self, app, surface: pygame.Surface) -> None:
-        if self.selected_module == "storage":
-            self._draw_materials_pouch(app, surface)
-            if self.storage_scroll:
-                self.storage_scroll.draw(surface)
-            draw_text(surface, "Materials are separate from gear capacity.", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._module_hint_rect.left, self._module_hint_rect.top))
-            return
-
-        if self.selected_module == "crafting":
-            if self.crafting_scroll:
-                self.crafting_scroll.draw(surface)
-            return
-
-        level = int(app.save_data.vault.upgrades.get("drone_bay_level", 0))
-        lines = [
-            f"Drone Bay Level: {level}",
-            "Recovery quality scales with drone upgrades.",
-            "Retreating applies a recovery penalty.",
-        ]
-        y = self._module_hint_rect.top + 8
-        for line in lines:
-            draw_text(surface, line, theme.get_font(17), theme.COLOR_TEXT, (self._module_hint_rect.left + 8, y))
-            y += 24
-
-    def _draw_onboarding(self, app, surface: pygame.Surface, rect: pygame.Rect) -> None:
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, rect, width=2, border_radius=2)
-        draw_text(surface, "What To Do Next", theme.get_font(17, bold=True), theme.COLOR_TEXT, (rect.left + 8, rect.top + 6))
-
-        has_citizen = app.save_data.vault.current_citizen is not None
-        has_loadout = any(bool(v) for v in app.current_loadout.model_dump(mode="python").values())
-        steps = [
-            ("1. Draft a citizen", has_citizen),
-            ("2. Open Loadout and equip gear", has_loadout),
-            ("3. Press Deploy to start the run", has_citizen),
-        ]
-        y = rect.top + 34
-        for label, done in steps:
-            prefix = "[OK]" if done else "[  ]"
-            color = theme.COLOR_SUCCESS if done else theme.COLOR_TEXT
-            draw_text(surface, f"{prefix} {label}", theme.get_font(14, bold=done), color, (rect.left + 8, y))
-            y += 18
-
-        if not has_citizen:
-            draw_text(surface, "Tip: Start with Use The Claw.", theme.get_font(13), theme.COLOR_WARNING, (rect.left + 8, rect.bottom - 18))
-
-    def _draw_right_panel(self, app, surface: pygame.Surface) -> None:
-        right_inner = pygame.Rect(self._right_rect.left + 10, self._right_rect.top + 36, self._right_rect.width - 20, self._right_rect.height - 46)
-        right_rows = split_rows(right_inner, [0.28, 0.28, 0.44], gap=8)
-        guide_rect, citizen_rect, detail_rect = right_rows
-        self._draw_onboarding(app, surface, guide_rect)
-
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, citizen_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, citizen_rect, width=2, border_radius=2)
-        draw_text(surface, "Drafted Citizen", theme.get_font(17, bold=True), theme.COLOR_TEXT, (citizen_rect.left + 8, citizen_rect.top + 6))
-        current = app.save_data.vault.current_citizen
-        if current:
-            avatar_rect = pygame.Rect(citizen_rect.left + 8, citizen_rect.top + 28, 56, 56)
-            draw_citizen_avatar(surface, avatar_rect, current.id, current.name, selected=True, time_s=pygame.time.get_ticks() / 1000.0)
-            draw_text(surface, current.name, theme.get_font(17, bold=True), theme.COLOR_SUCCESS, (avatar_rect.right + 10, citizen_rect.top + 34))
-            draw_text(surface, current.quirk, theme.get_font(13), theme.COLOR_TEXT_MUTED, (avatar_rect.right + 10, citizen_rect.top + 54))
-        else:
-            draw_text(surface, "No drafted citizen yet.", theme.get_font(14), theme.COLOR_TEXT_MUTED, (citizen_rect.left + 8, citizen_rect.top + 34))
-
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, detail_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, detail_rect, width=2, border_radius=2)
-
-        if self.selected_module == "crafting" and self.selected_recipe_id:
-            recipe = app.content.recipe_by_id.get(self.selected_recipe_id)
-            if recipe:
-                craftable, requirements = can_craft(app.save_data.vault, recipe)
-                y = detail_rect.top + 8
-                draw_text(surface, recipe.name, theme.get_font(16, bold=True), theme.COLOR_TEXT, (detail_rect.left + 8, y))
-                y += 20
-                if recipe.description:
-                    for line in wrap_text(recipe.description, theme.get_font(12), detail_rect.width - 16)[:2]:
-                        draw_text(surface, line, theme.get_font(12), theme.COLOR_TEXT_MUTED, (detail_rect.left + 8, y))
-                        y += 14
-                y += 4
-                for material_id, (have, need) in requirements.items():
-                    color = theme.COLOR_SUCCESS if have >= need else theme.COLOR_WARNING
-                    draw_text(surface, f"{material_id.title()}: {have}/{need}", theme.get_font(12, bold=True), color, (detail_rect.left + 8, y))
-                    y += 14
-                y += 4
-                out_item = app.content.item_by_id.get(recipe.output_item)
-                out_name = out_item.name if out_item else recipe.output_item
-                draw_text(surface, f"Output: {out_name} x{recipe.output_qty}", theme.get_font(12), theme.COLOR_TEXT, (detail_rect.left + 8, y))
-                y += 14
-                draw_text(surface, "Craftable" if craftable else "Missing materials", theme.get_font(12, bold=True), theme.COLOR_SUCCESS if craftable else theme.COLOR_WARNING, (detail_rect.left + 8, y))
-                return
-
-        if self.selected_module == "storage" and self.selected_storage_item_id:
-            item = app.content.item_by_id.get(self.selected_storage_item_id)
-            if item:
-                y = detail_rect.top + 8
-                draw_text(surface, item.name, theme.get_font(16, bold=True), theme.COLOR_TEXT, (detail_rect.left + 8, y))
-                y += 20
-                draw_text(surface, f"Slot {item.slot} | {item.rarity}", theme.get_font(13), theme.COLOR_TEXT_MUTED, (detail_rect.left + 8, y))
-                y += 18
-                tags = ", ".join(item.tags) if item.tags else "-"
-                for line in wrap_text(f"Tags: {tags}", theme.get_font(13), detail_rect.width - 16):
-                    draw_text(surface, line, theme.get_font(13), theme.COLOR_TEXT, (detail_rect.left + 8, y))
-                    y += 16
-                y += 4
-                mods = item.modifiers.model_dump(mode="python", exclude_none=True)
-                for key, value in mods.items():
-                    draw_text(surface, f"{key}: {value:+.2f}" if isinstance(value, float) else f"{key}: {value}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (detail_rect.left + 8, y))
-                    y += 14
-                return
-
-        preview_state = GameState(
-            seed=0,
-            biome_id="suburbs",
-            rng_state=1,
-            rng_calls=0,
-            equipped=app.current_loadout.model_copy(deep=True),
-        )
-        summary = compute_loadout_summary(preview_state, app.content)
-        y = detail_rect.top + 8
-        draw_text(surface, "Loadout Preview", theme.get_font(16, bold=True), theme.COLOR_TEXT, (detail_rect.left + 8, y))
-        y += 20
-        for slot_name, item_id in app.current_loadout.model_dump(mode="python").items():
-            draw_text(surface, f"{slot_name}: {item_id or '-'}", theme.get_font(13), theme.COLOR_TEXT_MUTED, (detail_rect.left + 8, y))
-            y += 14
-        y += 2
-        draw_text(surface, f"Tags: {', '.join(summary['tags']) if summary['tags'] else '-'}", theme.get_font(12), theme.COLOR_TEXT, (detail_rect.left + 8, y))
-        y += 16
-        draw_text(surface, f"Speed {summary['speed_bonus']:+.2f}  Carry {summary['carry_bonus']:+.1f}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (detail_rect.left + 8, y))
-        y += 14
-        draw_text(surface, f"Injury Resist {summary['injury_resist']*100:.0f}%  Noise {summary['noise']:+.2f}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (detail_rect.left + 8, y))
-
-    def _draw_citizen_details(self, app, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._citizen_detail_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self._citizen_detail_rect, width=2, border_radius=2)
-        y = self._citizen_detail_rect.top + 6
-        draw_text(surface, "Citizen Details", theme.get_font(15, bold=True), theme.COLOR_TEXT, (self._citizen_detail_rect.left + 8, y))
-        y += 18
-        selected = self._selected_citizen(app)
-        if selected:
-            draw_text(surface, selected.name, theme.get_font(14, bold=True), theme.COLOR_SUCCESS, (self._citizen_detail_rect.left + 8, y))
-            y += 16
-            draw_text(surface, selected.quirk, theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._citizen_detail_rect.left + 8, y))
-            y += 14
-            kit = ", ".join(f"{item} x{qty}" for item, qty in sorted(selected.kit.items())) or "None"
-            for line in wrap_text(f"Kit: {kit}", theme.get_font(12), self._citizen_detail_rect.width - 16)[:2]:
-                draw_text(surface, line, theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._citizen_detail_rect.left + 8, y))
-                y += 14
-        else:
-            draw_text(surface, "Select a citizen row to inspect.", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._citizen_detail_rect.left + 8, y))
-            y += 14
-        current = app.save_data.vault.current_citizen
-        label = current.name if current else "None"
-        draw_text(surface, f"Current Draft: {label}", theme.get_font(12, bold=True), theme.COLOR_TEXT, (self._citizen_detail_rect.left + 8, self._citizen_detail_rect.bottom - 16))
-
     def render(self, app, surface: pygame.Surface) -> None:
         if app.save_data is None:
             from .menu import MainMenuScene
 
             app.change_scene(MainMenuScene("No save loaded."))
             return
-        refill_citizen_queue(app.save_data.vault, target_size=12)
-        self._build_layout(app)
 
+        self._build_layout(app)
         app.backgrounds.draw(surface, "vault")
         Panel(self._top_rect, title="Vault Dashboard").draw(surface)
         Panel(self._left_rect, title="Citizen Line").draw(surface)
@@ -514,16 +490,53 @@ class BaseScene(Scene):
         Panel(self._bottom_rect).draw(surface)
 
         self._draw_top_bar(app, surface)
-        draw_text(surface, f"Queued Citizens: {len(app.save_data.vault.citizen_queue)}", theme.get_font(15, bold=True), theme.COLOR_TEXT, (self._citizen_header_rect.left + 2, self._citizen_header_rect.top + 2))
+        self.claw_room.draw(surface, self._claw_room_panel, app.save_data.vault.citizen_queue)
+        self._draw_left_detail(app, surface)
 
-        if self.citizen_scroll:
-            self.citizen_scroll.draw(surface)
-        self._draw_citizen_details(app, surface)
-        self._draw_storage_module(app, surface)
+        if self.selected_module == "storage":
+            self._draw_materials_row(app, surface)
+            if self.storage_scroll:
+                draw_text(
+                    surface,
+                    "Gear Storage",
+                    theme.get_font(14, bold=True),
+                    theme.COLOR_TEXT_MUTED,
+                    (self.storage_scroll.rect.left + 2, self.storage_scroll.rect.top - 16),
+                )
+            if self.storage_scroll:
+                self.storage_scroll.draw(surface)
+        elif self.selected_module == "crafting":
+            if self.crafting_scroll:
+                self.crafting_scroll.draw(surface)
+        else:
+            center_inner = pygame.Rect(self._center_rect.left + 20, self._center_rect.top + 92, self._center_rect.width - 40, self._center_rect.height - 108)
+            draw_text(surface, "Drone Bay Status", theme.get_font(18, bold=True), theme.COLOR_TEXT, (center_inner.left, center_inner.top))
+            lines = [
+                f"Level: {int(app.save_data.vault.upgrades.get('drone_bay_level', 0))}",
+                "Higher levels improve return quality.",
+                "Retreating applies a recovery penalty.",
+            ]
+            y = center_inner.top + 28
+            for line in lines:
+                draw_text(surface, line, theme.get_font(14), theme.COLOR_TEXT_MUTED, (center_inner.left, y))
+                y += 20
+
         self._draw_right_panel(app, surface)
 
         mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
+            if button.text in {"Storage", "Crafting", "Drone Bay"}:
+                active = (
+                    (button.text == "Storage" and self.selected_module == "storage")
+                    or (button.text == "Crafting" and self.selected_module == "crafting")
+                    or (button.text == "Drone Bay" and self.selected_module == "drone")
+                )
+                if active:
+                    button.bg = (106, 132, 118)
+                    button.bg_hover = (134, 164, 146)
+                else:
+                    button.bg = (82, 110, 98)
+                    button.bg_hover = (114, 146, 130)
             if button.text == "Craft Selected":
                 recipe = app.content.recipe_by_id.get(self.selected_recipe_id) if self.selected_recipe_id else None
                 button.enabled = bool(recipe and can_craft(app.save_data.vault, recipe)[0])
@@ -531,11 +544,11 @@ class BaseScene(Scene):
 
         tip = hovered_tooltip(self.buttons)
         if tip:
-            tip_rect = pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top - 26, self._bottom_rect.width - 16, 20)
+            tip_rect = pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top - 22, self._bottom_rect.width - 16, 18)
             draw_tooltip_bar(surface, tip_rect, tip)
 
         if self.message:
-            draw_text(surface, self.message, theme.get_font(15), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 6), "midbottom")
+            draw_text(surface, self.message, theme.get_font(15), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 5), "midbottom")
         if self.help_overlay:
             self._draw_help_overlay(surface)
 
@@ -546,11 +559,11 @@ class BaseScene(Scene):
         rect = pygame.Rect(surface.get_width() // 2 - 360, surface.get_height() // 2 - 220, 720, 440)
         Panel(rect, title="Base Help").draw(surface)
         lines = [
-            "1) Draft a citizen from the left roster.",
-            "2) Open Loadout and equip gear/tags.",
-            "3) Deploy to mission briefing and begin run.",
-            "Storage keeps gear; materials pouch is separate.",
-            "Use H anytime to reopen help.",
+            "Citizens move in the claw room. Click one to inspect.",
+            "Use The Claw runs a deterministic claw-machine draft.",
+            "Draft Selected drafts the currently highlighted citizen.",
+            "Materials pouch is separate from gear storage capacity.",
+            "Loadout -> Deploy -> Run is the main loop.",
             "Press any key to close.",
         ]
         y = rect.top + 54

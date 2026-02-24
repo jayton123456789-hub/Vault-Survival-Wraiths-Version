@@ -267,15 +267,12 @@ def _draw_pixel_frame(
     if inner.width <= 0 or inner.height <= 0:
         return
     pygame.draw.rect(surface, fill_color, inner, border_radius=theme.BORDER_RADIUS)
-    if inner.width > 4 and inner.height > 4:
-        highlight_rect = inner.inflate(-2, -2)
-        pygame.draw.rect(
-            surface,
-            theme.COLOR_BORDER_INNER,
-            highlight_rect,
-            width=theme.BORDER_INNER_WIDTH,
-            border_radius=theme.BORDER_RADIUS,
-        )
+    if inner.width > 6 and inner.height > 6:
+        inset = inner.inflate(-2, -2)
+        pygame.draw.line(surface, theme.COLOR_BORDER_HIGHLIGHT, (inset.left, inset.top), (inset.right, inset.top), 1)
+        pygame.draw.line(surface, theme.COLOR_BORDER_HIGHLIGHT, (inset.left, inset.top), (inset.left, inset.bottom), 1)
+        pygame.draw.line(surface, theme.COLOR_BORDER_SHADE, (inset.left, inset.bottom), (inset.right, inset.bottom), 1)
+        pygame.draw.line(surface, theme.COLOR_BORDER_SHADE, (inset.right, inset.top), (inset.right, inset.bottom), 1)
 
 
 def _draw_pixel_button(
@@ -294,3 +291,5 @@ def _draw_pixel_button(
     )
     if top_rect.width > 0 and top_rect.height > 0:
         pygame.draw.rect(surface, top_color, top_rect, border_radius=theme.BORDER_RADIUS)
+    split_y = rect.top + rect.height // 2
+    pygame.draw.line(surface, theme.COLOR_BORDER_INNER, (rect.left + 2, split_y), (rect.right - 2, split_y), 1)

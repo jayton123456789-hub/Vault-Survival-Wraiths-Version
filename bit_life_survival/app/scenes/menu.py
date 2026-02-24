@@ -5,6 +5,7 @@ from datetime import datetime
 import pygame
 
 from bit_life_survival.app.ui import theme
+from bit_life_survival.app.ui.avatar import draw_citizen_sprite
 from bit_life_survival.app.ui.layout import anchored_rect, split_rows
 from bit_life_survival.app.ui.widgets import Button, Panel, draw_text, wrap_text
 
@@ -17,6 +18,7 @@ class MainMenuScene(Scene):
         self.buttons: list[Button] = []
         self._last_size: tuple[int, int] | None = None
         self._panel_rect = pygame.Rect(0, 0, 0, 0)
+        self._title_rect = pygame.Rect(0, 0, 0, 0)
         self._footer_rect = pygame.Rect(0, 0, 0, 0)
 
     def _continue(self, app) -> None:
@@ -50,10 +52,16 @@ class MainMenuScene(Scene):
         self._last_size = app.screen.get_size()
         self.buttons = []
 
-        self._panel_rect = anchored_rect(app.screen.get_rect(), (440, 620), "center")
+        self._panel_rect = anchored_rect(app.screen.get_rect(), (468, 640), "center")
+        self._title_rect = pygame.Rect(
+            self._panel_rect.left + 28,
+            self._panel_rect.top + 22,
+            self._panel_rect.width - 56,
+            160,
+        )
         button_area = pygame.Rect(
             self._panel_rect.left + 44,
-            self._panel_rect.top + 216,
+            self._panel_rect.top + 218,
             self._panel_rect.width - 88,
             280,
         )
@@ -99,15 +107,42 @@ class MainMenuScene(Scene):
         self._build_layout(app)
         app.backgrounds.draw(surface, "vault")
         Panel(self._panel_rect).draw(surface)
+        pygame.draw.rect(surface, (64, 34, 92), self._title_rect, border_radius=2)
+        pygame.draw.rect(surface, theme.COLOR_BORDER, self._title_rect, width=2, border_radius=2)
 
+        draw_text(surface, "VAULT", theme.get_font(86, bold=True), (36, 22, 48), (self._panel_rect.centerx + 2, self._panel_rect.top + 82), "center")
+        draw_text(surface, "SURVIVAL", theme.get_font(72, bold=True), (36, 22, 48), (self._panel_rect.centerx + 2, self._panel_rect.top + 140), "center")
         draw_text(surface, "VAULT", theme.get_font(86, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 80), "center")
         draw_text(surface, "SURVIVAL", theme.get_font(72, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 138), "center")
+        draw_citizen_sprite(
+            surface,
+            self._panel_rect.right - 92,
+            self._panel_rect.top + 116,
+            citizen_id="menu_mascot",
+            scale=4,
+            selected=True,
+            walk_phase=pygame.time.get_ticks() / 1000.0,
+        )
+        draw_text(
+            surface,
+            "Choose a protocol to continue.",
+            theme.get_font(14),
+            theme.COLOR_TEXT_MUTED,
+            (self._panel_rect.centerx, self._panel_rect.top + 192),
+            "center",
+        )
 
         mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
-            if button.text in {"Options", "Exit"}:
+            if button.text == "Exit":
                 button.bg = (124, 64, 72)
                 button.bg_hover = (162, 74, 84)
+            elif button.text == "Options":
+                button.bg = (130, 84, 76)
+                button.bg_hover = (168, 108, 94)
+            elif button.text == "Load Game":
+                button.bg = (78, 104, 122)
+                button.bg_hover = (108, 132, 154)
             else:
                 button.bg = (78, 110, 96)
                 button.bg_hover = (108, 148, 126)

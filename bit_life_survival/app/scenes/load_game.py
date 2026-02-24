@@ -16,21 +16,25 @@ class LoadGameScene(Scene):
         self.back_button: Button | None = None
         self._last_size: tuple[int, int] | None = None
         self.message: str = ""
+        self._slot_cards: list[pygame.Rect] = []
 
     def _layout(self, app) -> None:
         if self._last_size == app.screen.get_size() and self.slot_buttons:
             return
         self._last_size = app.screen.get_size()
-        panel_rect = anchored_rect(app.screen.get_rect(), (820, 560))
+        panel_rect = anchored_rect(app.screen.get_rect(), (900, 610))
+        self._panel_rect = panel_rect
         self._slot_ids = tuple(app.save_service.slot_ids)
         rows = split_rows(
-            pygame.Rect(panel_rect.left + 20, panel_rect.top + 80, panel_rect.width - 40, panel_rect.height - 140),
+            pygame.Rect(panel_rect.left + 20, panel_rect.top + 90, panel_rect.width - 40, panel_rect.height - 160),
             [1 for _ in self._slot_ids],
-            gap=12,
+            gap=10,
         )
         self.slot_buttons = []
-        for row, slot in zip(rows, self._slot_ids):
-            self.slot_buttons.append(Button(row, f"Slot {slot}", on_click=lambda s=slot: self._load_slot(app, s)))
+        self._slot_cards = list(rows)
+        for row, slot in zip(self._slot_cards, self._slot_ids):
+            button_rect = pygame.Rect(row.left + 6, row.top + 6, row.width - 12, max(44, row.height // 2 - 6))
+            self.slot_buttons.append(Button(button_rect, f"Slot {slot}", on_click=lambda s=slot: self._load_slot(app, s)))
         self.back_button = Button(
             pygame.Rect(panel_rect.left + 20, panel_rect.bottom - 48, 180, 34),
             "Back",
@@ -65,24 +69,27 @@ class LoadGameScene(Scene):
 
     def render(self, app, surface: pygame.Surface) -> None:
         self._layout(app)
-        surface.fill(theme.COLOR_BG)
-        panel_rect = anchored_rect(surface.get_rect(), (820, 560))
+        app.backgrounds.draw(surface, "vault")
+        panel_rect = self._panel_rect
         Panel(panel_rect, title="Load Game").draw(surface)
 
         summaries = {summary.slot: summary for summary in app.save_service.list_slots()}
         mouse_pos = app.virtual_mouse_pos()
-        for slot, button in zip(self._slot_ids, self.slot_buttons):
+        for slot, button, card in zip(self._slot_ids, self.slot_buttons, self._slot_cards):
             summary = summaries[slot]
             button.text = f"Slot {slot} - {'Load' if summary.occupied else 'Empty'}"
             button.enabled = summary.occupied
+            pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, card, border_radius=2)
+            pygame.draw.rect(surface, theme.COLOR_BORDER, card, width=2, border_radius=2)
             button.draw(surface, mouse_pos)
-            subtitle = (
-                f"Vault Lv {summary.vault_level} | TAV {summary.tav} | Drone {summary.drone_bay_level} | "
-                f"Last {summary.last_distance:.1f} / t{summary.last_time}"
-                if summary.occupied
-                else "No save data"
-            )
-            draw_text(surface, subtitle, theme.get_font(15), theme.COLOR_TEXT_MUTED, (button.rect.left + 8, button.rect.bottom + 4))
+            if summary.occupied:
+                line1 = f"Vault Lv {summary.vault_level} | TAV {summary.tav} | Drone {summary.drone_bay_level}"
+                line2 = f"Last run {summary.last_distance:.1f} mi / t{summary.last_time}"
+            else:
+                line1 = "No save data"
+                line2 = "This slot is empty."
+            draw_text(surface, line1, theme.get_font(13), theme.COLOR_TEXT_MUTED, (card.left + 10, card.bottom - 30))
+            draw_text(surface, line2, theme.get_font(13), theme.COLOR_TEXT_MUTED, (card.left + 10, card.bottom - 14))
 
         if self.back_button:
             self.back_button.draw(surface, mouse_pos)
