@@ -9,11 +9,11 @@ import pygame
 class PixelRenderer:
     virtual_width: int = 640
     virtual_height: int = 360
-    clear_color: tuple[int, int, int] = (8, 6, 12)
+    clear_color: tuple[int, int, int] = (22, 14, 30)
     _window_size: tuple[int, int] = field(init=False, repr=False)
     _scaled_size: tuple[int, int] = field(init=False, repr=False)
     _offset: tuple[int, int] = field(init=False, repr=False)
-    _scale: int = field(init=False, repr=False)
+    _scale: float = field(init=False, repr=False)
     _cached_scaled: pygame.Surface | None = field(init=False, default=None, repr=False)
     _cached_source_size: tuple[int, int] | None = field(init=False, default=None, repr=False)
     _cached_target_size: tuple[int, int] | None = field(init=False, default=None, repr=False)
@@ -36,10 +36,13 @@ class PixelRenderer:
 
     def set_window_size(self, size: tuple[int, int]) -> None:
         self._window_size = (max(1, int(size[0])), max(1, int(size[1])))
-        max_scale_x = max(1, self._window_size[0] // self.virtual_width)
-        max_scale_y = max(1, self._window_size[1] // self.virtual_height)
-        self._scale = max(1, min(max_scale_x, max_scale_y))
-        self._scaled_size = (self.virtual_width * self._scale, self.virtual_height * self._scale)
+        scale_x = self._window_size[0] / float(self.virtual_width)
+        scale_y = self._window_size[1] / float(self.virtual_height)
+        self._scale = max(0.1, min(scale_x, scale_y))
+        self._scaled_size = (
+            max(1, int(self.virtual_width * self._scale)),
+            max(1, int(self.virtual_height * self._scale)),
+        )
         self._offset = (
             (self._window_size[0] - self._scaled_size[0]) // 2,
             (self._window_size[1] - self._scaled_size[1]) // 2,
@@ -49,7 +52,7 @@ class PixelRenderer:
         self._cached_target_size = None
 
     def window_to_virtual(self, pos: tuple[int, int]) -> tuple[int, int]:
-        if self._scale <= 0:
+        if self._scale <= 0.0:
             return 0, 0
         x = (int(pos[0]) - self._offset[0]) / float(self._scale)
         y = (int(pos[1]) - self._offset[1]) / float(self._scale)
@@ -63,8 +66,8 @@ class PixelRenderer:
             if "pos" in payload:
                 payload["pos"] = self.window_to_virtual(payload["pos"])
             if event.type == pygame.MOUSEMOTION and "rel" in payload:
-                rel_x = int(round(payload["rel"][0] / max(1, self._scale)))
-                rel_y = int(round(payload["rel"][1] / max(1, self._scale)))
+                rel_x = int(round(payload["rel"][0] / max(0.1, self._scale)))
+                rel_y = int(round(payload["rel"][1] / max(0.1, self._scale)))
                 payload["rel"] = (rel_x, rel_y)
             return pygame.event.Event(event.type, payload)
         return event

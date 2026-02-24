@@ -16,7 +16,7 @@ def draw_text(
     pos: tuple[int, int],
     anchor: str = "topleft",
 ) -> pygame.Rect:
-    rendered = font.render(text, True, color)
+    rendered = font.render(text, False, color)
     rect = rendered.get_rect()
     setattr(rect, anchor, pos)
     surface.blit(rendered, rect)
@@ -65,12 +65,27 @@ class Panel:
     def draw(self, surface: pygame.Surface) -> None:
         _draw_pixel_frame(surface, self.rect, self.bg, self.border)
         if self.title:
+            title_rect = pygame.Rect(
+                self.rect.left + theme.BORDER_WIDTH + 2,
+                self.rect.top + theme.BORDER_WIDTH + 2,
+                self.rect.width - (theme.BORDER_WIDTH * 2) - 4,
+                26,
+            )
+            pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, title_rect, border_radius=theme.BORDER_RADIUS)
+            pygame.draw.line(
+                surface,
+                theme.COLOR_BORDER_INNER,
+                (title_rect.left, title_rect.bottom),
+                (title_rect.right, title_rect.bottom),
+                1,
+            )
             draw_text(
                 surface,
                 self.title,
-                theme.get_font(18, bold=True),
+                theme.get_font(17, bold=True),
                 theme.COLOR_TEXT,
-                (self.rect.left + theme.PADDING, self.rect.top + theme.PADDING),
+                (title_rect.left + 6, title_rect.centery),
+                "midleft",
             )
 
 
@@ -125,7 +140,8 @@ class Button:
             bottom = theme.COLOR_BUTTON_BOTTOM
             fg = self.fg
         _draw_pixel_button(surface, self.rect, top, bottom, theme.COLOR_BORDER)
-        draw_text(surface, self.text, theme.get_font(20, bold=True), fg, self.rect.center, "center")
+        font_size = max(12, min(20, int(self.rect.height * 0.48)))
+        draw_text(surface, self.text, theme.get_font(font_size, bold=True), fg, self.rect.center, "center")
 
     def tooltip_visible(self) -> bool:
         if not self.hovered or not self.tooltip:
