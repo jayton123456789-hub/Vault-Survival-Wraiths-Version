@@ -5,6 +5,7 @@ from typing import Literal
 
 import pygame
 
+from bit_life_survival.app.services.narrative import citizen_quip, event_flavor_line
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, Panel, ProgressBar, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
@@ -459,6 +460,18 @@ class RunScene(Scene):
         event = self.event_overlay.event_instance
         draw_text(surface, event.title, theme.get_font(28, bold=True), theme.COLOR_TEXT, (modal_rect.left + 16, modal_rect.top + 44))
         y = modal_rect.top + 82
+        flavor = event_flavor_line(self.state.seed, self.state.step, event.event_id, self.state.biome_id, event.tags)
+        if flavor:
+            for line in wrap_text(flavor, theme.get_font(16), modal_rect.width - 32):
+                draw_text(surface, line, theme.get_font(16), theme.COLOR_TEXT_MUTED, (modal_rect.left + 16, y))
+                y += 20
+            y += 4
+        quip = citizen_quip(self._app.save_data.vault.current_citizen.quirk if self._app.save_data.vault.current_citizen else None)
+        if quip:
+            for line in wrap_text(quip, theme.get_font(15), modal_rect.width - 32):
+                draw_text(surface, line, theme.get_font(15), theme.COLOR_ACCENT, (modal_rect.left + 16, y))
+                y += 18
+            y += 6
         for line in wrap_text(event.text, theme.get_font(19), modal_rect.width - 32):
             draw_text(surface, line, theme.get_font(19), theme.COLOR_TEXT, (modal_rect.left + 16, y))
             y += 24
