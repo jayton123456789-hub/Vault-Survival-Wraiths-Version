@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pygame
 
@@ -10,6 +10,13 @@ class PixelRenderer:
     virtual_width: int = 640
     virtual_height: int = 360
     clear_color: tuple[int, int, int] = (8, 6, 12)
+    _window_size: tuple[int, int] = field(init=False, repr=False)
+    _scaled_size: tuple[int, int] = field(init=False, repr=False)
+    _offset: tuple[int, int] = field(init=False, repr=False)
+    _scale: int = field(init=False, repr=False)
+    _cached_scaled: pygame.Surface | None = field(init=False, default=None, repr=False)
+    _cached_source_size: tuple[int, int] | None = field(init=False, default=None, repr=False)
+    _cached_target_size: tuple[int, int] | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self._window_size: tuple[int, int] = (self.virtual_width * 2, self.virtual_height * 2)
