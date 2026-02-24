@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pygame
 
+from bit_life_survival.app.services.loadout_planner import RUN_SLOTS, choose_best_for_slot, format_choice_reason
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import split_columns, split_rows
-from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text
+from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, wrap_text
 from bit_life_survival.core.models import GameState
 from bit_life_survival.core.persistence import store_item, take_item
 from bit_life_survival.core.travel import compute_loadout_summary
@@ -12,7 +13,6 @@ from bit_life_survival.core.travel import compute_loadout_summary
 from .core import Scene
 
 
-RUN_SLOTS = ("pack", "armor", "vehicle", "utility1", "utility2", "faction")
 SLOT_FILTER_VALUES = ["all", "pack", "armor", "vehicle", "utility", "faction"]
 RARITY_FILTER_VALUES = ["all", "common", "uncommon", "rare", "legendary"]
 
@@ -24,9 +24,11 @@ class LoadoutScene(Scene):
         self.selected_item_id: str | None = None
         self.selected_slot_filter = "all"
         self.selected_rarity_filter = "all"
+        self.active_slot: str | None = None
         self.message = ""
         self._last_size: tuple[int, int] | None = None
         self._inventory_items: list[tuple[str, int]] = []
+        self._slot_buttons: dict[str, Button] = {}
 
     def _allowed_slot(self, run_slot: str) -> str:
         return "utility" if run_slot in {"utility1", "utility2"} else run_slot
@@ -53,7 +55,11 @@ class LoadoutScene(Scene):
             rows.append((item_id, qty))
         self._inventory_items = rows
         if self.scroll_list:
-            self.scroll_list.set_items([f"{item_id} x{qty}" for item_id, qty in rows])
+            lines = []
+            for item_id, qty in rows:
+                item = app.content.item_by_id[item_id]
+                lines.append(f"{item.name} ({item.rarity}) x{qty}")
+            self.scroll_list.set_items(lines)
 
     def _cycle_filter(self, app, which: str) -> None:
         if which == "slot":
@@ -70,38 +76,79 @@ class LoadoutScene(Scene):
         if 0 <= index < len(self._inventory_items):
             self.selected_item_id = self._inventory_items[index][0]
 
-    def _equip_to_slot(self, app, run_slot: str) -> None:
+    def _equip_to_slot(self, app, run_slot: str) -> bool:
+        self.active_slot = run_slot
         if self.selected_item_id is None:
-            self.message = "Select an item first."
-            return
+            self.message = f"Selected slot: {run_slot}. Pick an item or use Equip Best."
+            return False
         item = app.content.item_by_id.get(self.selected_item_id)
         if not item:
             self.message = "Selected item no longer available."
-            return
+            return False
         if item.slot != self._allowed_slot(run_slot):
-            self.message = f"{item.id} cannot be equipped to {run_slot}."
-            return
+            self.message = f"{item.name} cannot be equipped to {run_slot}."
+            return False
         if not take_item(app.save_data.vault, item.id, 1):
-            self.message = f"{item.id} unavailable in storage."
-            return
+            self.message = f"{item.name} unavailable in storage."
+            return False
         current = getattr(app.current_loadout, run_slot)
         if current:
             store_item(app.save_data.vault, current, 1)
         setattr(app.current_loadout, run_slot, item.id)
-        self.message = f"Equipped {item.id} to {run_slot}."
+        self.message = f"Equipped {item.name} to {run_slot}."
+        app.save_current_slot()
+        self._refresh_inventory(app)
+        return True
+
+    def _unequip_all(self, app) -> None:
+        for run_slot in RUN_SLOTS:
+            current = getattr(app.current_loadout, run_slot)
+            if current:
+                store_item(app.save_data.vault, current, 1)
+                setattr(app.current_loadout, run_slot, None)
+
+    def _equip_best_for_slot(self, app, run_slot: str) -> bool:
+        current = getattr(app.current_loadout, run_slot)
+        if current:
+            store_item(app.save_data.vault, current, 1)
+            setattr(app.current_loadout, run_slot, None)
+
+        choice = choose_best_for_slot(app.content, app.save_data.vault.storage, run_slot, reserved={})
+        if not choice:
+            self.message = f"No compatible item for {run_slot}."
+            return False
+        if not take_item(app.save_data.vault, choice.item_id, 1):
+            self.message = f"Unable to reserve {choice.item_id}."
+            return False
+        setattr(app.current_loadout, run_slot, choice.item_id)
+        self.message = format_choice_reason(app.content, choice)
+        return True
+
+    def _equip_best(self, app) -> None:
+        if self.active_slot:
+            self._equip_best_for_slot(app, self.active_slot)
+        else:
+            self._equip_all(app)
+            return
         app.save_current_slot()
         self._refresh_inventory(app)
 
-    def _unequip_slot(self, app, run_slot: str) -> None:
-        current = getattr(app.current_loadout, run_slot)
-        if not current:
-            self.message = f"{run_slot} already empty."
-            return
-        store_item(app.save_data.vault, current, 1)
-        setattr(app.current_loadout, run_slot, None)
-        self.message = f"Unequipped {current}."
+    def _equip_all(self, app) -> None:
+        self._unequip_all(app)
+        reserved: dict[str, int] = {}
+        lines: list[str] = []
+        for run_slot in RUN_SLOTS:
+            choice = choose_best_for_slot(app.content, app.save_data.vault.storage, run_slot, reserved)
+            if not choice:
+                continue
+            if not take_item(app.save_data.vault, choice.item_id, 1):
+                continue
+            reserved[choice.item_id] = reserved.get(choice.item_id, 0) + 1
+            setattr(app.current_loadout, run_slot, choice.item_id)
+            lines.append(format_choice_reason(app.content, choice))
         app.save_current_slot()
         self._refresh_inventory(app)
+        self.message = " ".join(lines[:2]) if lines else "No available gear to auto-equip."
 
     def _deploy(self, app) -> None:
         if app.save_data.vault.current_citizen is None:
@@ -111,9 +158,9 @@ class LoadoutScene(Scene):
         app.save_data.vault.last_run_seed = seed
         app.save_data.vault.run_counter += 1
         app.save_current_slot()
-        from .run import RunScene
+        from .briefing import BriefingScene
 
-        app.change_scene(RunScene(run_seed=seed))
+        app.change_scene(BriefingScene(run_seed=seed))
 
     def _back(self, app) -> None:
         from .base import BaseScene
@@ -125,6 +172,7 @@ class LoadoutScene(Scene):
             return
         self._last_size = app.screen.get_size()
         self.buttons = []
+        self._slot_buttons.clear()
         root = app.screen.get_rect().inflate(-20, -20)
         rows = split_rows(root, [0.82, 0.18], gap=10)
         cols = split_columns(rows[0], [0.42, 0.58], gap=10)
@@ -133,8 +181,8 @@ class LoadoutScene(Scene):
 
         top_filters = pygame.Rect(left.left + 12, left.top + 42, left.width - 24, 38)
         filter_cols = split_columns(top_filters, [1, 1], gap=8)
-        self.buttons.append(Button(filter_cols[0], f"Slot: {self.selected_slot_filter}", on_click=lambda: self._cycle_filter(app, "slot")))
-        self.buttons.append(Button(filter_cols[1], f"Rarity: {self.selected_rarity_filter}", on_click=lambda: self._cycle_filter(app, "rarity")))
+        self.buttons.append(Button(filter_cols[0], f"Slot: {self.selected_slot_filter}", on_click=lambda: self._cycle_filter(app, "slot"), tooltip="Filter inventory by item slot."))
+        self.buttons.append(Button(filter_cols[1], f"Rarity: {self.selected_rarity_filter}", on_click=lambda: self._cycle_filter(app, "rarity"), tooltip="Filter inventory by rarity tier."))
 
         list_rect = pygame.Rect(left.left + 12, left.top + 88, left.width - 24, left.height - 100)
         self.scroll_list = ScrollList(list_rect, row_height=30, on_select=self._on_select_inventory)
@@ -142,25 +190,38 @@ class LoadoutScene(Scene):
 
         slot_rows = [pygame.Rect(right.left + 12, right.top + 42 + i * 52, right.width - 24, 46) for i in range(len(RUN_SLOTS))]
         for slot_row, run_slot in zip(slot_rows, RUN_SLOTS):
-            self.buttons.append(Button(slot_row, f"{run_slot}: -", on_click=lambda s=run_slot: self._equip_to_slot(app, s)))
+            button = Button(
+                slot_row,
+                f"{run_slot}: -",
+                on_click=lambda s=run_slot: self._equip_to_slot(app, s),
+                tooltip=f"Equip selected item into {run_slot}. Click with no item to set active slot.",
+            )
+            self.buttons.append(button)
+            self._slot_buttons[run_slot] = button
 
-        clear_row = pygame.Rect(right.left + 12, right.top + 42 + len(RUN_SLOTS) * 52, right.width - 24, 40)
-        clear_cols = split_columns(clear_row, [1, 1, 1], gap=8)
-        self.buttons.append(Button(clear_cols[0], "Clear Utility1", on_click=lambda: self._unequip_slot(app, "utility1")))
-        self.buttons.append(Button(clear_cols[1], "Clear Utility2", on_click=lambda: self._unequip_slot(app, "utility2")))
-        self.buttons.append(Button(clear_cols[2], "Clear Faction", on_click=lambda: self._unequip_slot(app, "faction")))
+        auto_row = pygame.Rect(right.left + 12, right.top + 42 + len(RUN_SLOTS) * 52, right.width - 24, 40)
+        auto_cols = split_columns(auto_row, [1, 1], gap=8)
+        self.buttons.append(Button(auto_cols[0], "Equip Best", hotkey=pygame.K_b, on_click=lambda: self._equip_best(app), tooltip="Auto-equip best item for active slot (or all slots if none selected)."))
+        self.buttons.append(Button(auto_cols[1], "Equip All", hotkey=pygame.K_a, on_click=lambda: self._equip_all(app), tooltip="Fill all slots using deterministic best-score planner."))
 
-        bottom_cols = split_columns(pygame.Rect(rows[1].left + 8, rows[1].top + 8, rows[1].width - 16, rows[1].height - 16), [1, 1, 1], gap=10)
-        self.buttons.append(Button(bottom_cols[0], "Back", hotkey=pygame.K_ESCAPE, on_click=lambda: self._back(app)))
-        self.buttons.append(Button(bottom_cols[1], "Help", hotkey=pygame.K_h, on_click=lambda: self._show_help()))
-        self.buttons.append(Button(bottom_cols[2], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app)))
+        bottom_cols = split_columns(pygame.Rect(rows[1].left + 8, rows[1].top + 8, rows[1].width - 16, rows[1].height - 16), [1, 1, 1, 1], gap=10)
+        self.buttons.append(Button(bottom_cols[0], "Back", hotkey=pygame.K_ESCAPE, on_click=lambda: self._back(app), tooltip="Return to base screen."))
+        self.buttons.append(Button(bottom_cols[1], "Help", hotkey=pygame.K_h, on_click=lambda: self._show_help(), tooltip="Show quick loadout help."))
+        self.buttons.append(Button(bottom_cols[2], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), tooltip="Open mission briefing and begin run."))
+        self.buttons.append(Button(bottom_cols[3], "Clear All", on_click=lambda: self._clear_all(app), tooltip="Unequip all slots and return gear to storage."))
 
         self._left_rect = left
         self._right_rect = right
         self._bottom_rect = rows[1]
 
+    def _clear_all(self, app) -> None:
+        self._unequip_all(app)
+        app.save_current_slot()
+        self._refresh_inventory(app)
+        self.message = "Cleared all equipped items."
+
     def _show_help(self) -> None:
-        self.message = "Select inventory item -> click slot to equip. Filters cycle with top buttons."
+        self.message = "Pick an item and click a slot. Use Equip Best/All to auto-plan a build."
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
@@ -183,18 +244,14 @@ class LoadoutScene(Scene):
         mouse_pos = pygame.mouse.get_pos()
 
         for button in self.buttons:
-            if button.text.startswith("pack:") or any(button.text.startswith(f"{slot}:") for slot in RUN_SLOTS):
-                # Filled below after state snapshot.
-                pass
             button.draw(surface, mouse_pos)
         if self.scroll_list:
             self.scroll_list.draw(surface)
 
-        # Update slot button labels after drawing to keep references stable.
-        slot_buttons = [button for button in self.buttons if any(button.text.startswith(f"{slot}:") for slot in RUN_SLOTS)]
-        for button, run_slot in zip(slot_buttons, RUN_SLOTS):
+        for run_slot, button in self._slot_buttons.items():
             current = getattr(app.current_loadout, run_slot)
-            button.text = f"{run_slot}: {current or '-'}"
+            prefix = ">> " if self.active_slot == run_slot else ""
+            button.text = f"{prefix}{run_slot}: {current or '-'}"
             button.draw(surface, mouse_pos)
 
         preview_state = GameState(
@@ -209,8 +266,9 @@ class LoadoutScene(Scene):
         draw_text(surface, "Tags:", theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._right_rect.left + 14, y))
         y += 22
         tags = ", ".join(summary["tags"]) if summary["tags"] else "-"
-        draw_text(surface, tags, theme.get_font(15), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 14, y))
-        y += 24
+        for line in wrap_text(tags, theme.get_font(15), self._right_rect.width - 24):
+            draw_text(surface, line, theme.get_font(15), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 14, y))
+            y += 20
         carry_cap = 8 + max(0, int(round(summary["carry_bonus"])))
         lines = [
             f"Speed {summary['speed_bonus']:+.2f}",
@@ -224,6 +282,8 @@ class LoadoutScene(Scene):
             y += 20
 
         if self.selected_item_id:
-            draw_text(surface, f"Selected: {self.selected_item_id}", theme.get_font(16), theme.COLOR_ACCENT, (self._left_rect.left + 14, self._left_rect.bottom - 18), "midleft")
+            item = app.content.item_by_id.get(self.selected_item_id)
+            selected_name = item.name if item else self.selected_item_id
+            draw_text(surface, f"Selected: {selected_name}", theme.get_font(16), theme.COLOR_ACCENT, (self._left_rect.left + 14, self._left_rect.bottom - 18), "midleft")
         if self.message:
             draw_text(surface, self.message, theme.get_font(17), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 8), "midbottom")
