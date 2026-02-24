@@ -2,6 +2,17 @@
 
 Python roguelite prototype with deterministic run simulation, data-driven content, and a playable pygame window UI.
 
+## Windows Install
+Install path and user-data path are separated:
+- Repo install target: `C:\BitLifeSurvival\Vault_Bit_Survival\`
+- User data: `%LOCALAPPDATA%\BitLifeSurvival\`
+  - Saves: `%LOCALAPPDATA%\BitLifeSurvival\saves`
+  - Logs: `%LOCALAPPDATA%\BitLifeSurvival\logs`
+  - Config: `%LOCALAPPDATA%\BitLifeSurvival\config`
+
+Run installer/move helper:
+- `powershell -ExecutionPolicy Bypass -File scripts\windows_install.ps1`
+
 ## Quickstart
 1. Create venv:
    - `py -3.11 -m venv .venv`
@@ -24,6 +35,8 @@ Flow:
 
 ## Tests
 - `.venv\Scripts\python -m pytest -q`
+- Smoke run:
+  - `.venv\Scripts\python -m bit_life_survival.app.main`
 
 ## Docs
 - `docs/PHASE1_VERTICAL_SLICE.md`

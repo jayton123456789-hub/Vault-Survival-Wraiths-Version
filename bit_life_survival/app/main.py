@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-import traceback
 from pathlib import Path
 
 import pygame
@@ -9,9 +7,12 @@ import pygame
 from bit_life_survival.app.scenes.core import Scene
 from bit_life_survival.app.scenes.intro import IntroScene
 from bit_life_survival.app.services.audio import AudioService
+from bit_life_survival.app.services.logger import configure_logging
+from bit_life_survival.app.services.paths import resolve_user_paths
 from bit_life_survival.app.services.saves import SaveService
 from bit_life_survival.app.services.settings_store import SettingsStore
 from bit_life_survival.app.ui import theme
+from bit_life_survival.app.ui.widgets import wrap_text
 from bit_life_survival.core.loader import ContentValidationError, load_content
 from bit_life_survival.core.models import EquippedSlots
 from bit_life_survival.core.persistence import store_item
@@ -21,37 +22,22 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _configure_logging(repo_root: Path) -> tuple[logging.Logger, Path]:
-    logs_dir = repo_root / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    log_path = logs_dir / "latest.log"
-
-    logger = logging.getLogger("bit_life_survival")
-    logger.setLevel(logging.INFO)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    sh = logging.StreamHandler()
-    sh.setFormatter(formatter)
-    fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
-    fh.setFormatter(formatter)
-    logger.addHandler(sh)
-    logger.addHandler(fh)
-    return logger, log_path
-
-
 class GameApp:
     def __init__(self) -> None:
         self.repo_root = _repo_root()
-        self.logger, self.log_path = _configure_logging(self.repo_root)
+        self.user_paths = resolve_user_paths()
+        logger_bundle = configure_logging(self.user_paths.logs)
+        self.logger = logger_bundle.app
+        self.gameplay_logger = logger_bundle.gameplay
+        self.log_path = logger_bundle.latest_log_path
         self.logger.info("Starting Bit Life Survival...")
         print("Starting Bit Life Survival...")
 
         self.content = self._load_content()
-        self.settings_store = SettingsStore(self.repo_root / "settings.json")
+        self.settings_store = SettingsStore(self.user_paths.config / "settings.json")
         self.settings = self.settings_store.load()
-        self.save_service = SaveService(self.repo_root)
+        slot_count = int(self.settings.get("gameplay", {}).get("save_slots", 3))
+        self.save_service = SaveService(self.user_paths.saves, slot_count=slot_count)
         self.audio = AudioService()
         self.audio.configure(
             self.settings["audio"]["master"],
@@ -145,6 +131,43 @@ class GameApp:
     def quit(self) -> None:
         self.running = False
 
+    def _render_crash_modal(self, surface: pygame.Surface, message: str) -> None:
+        surface.fill((8, 8, 12))
+        modal = pygame.Rect(surface.get_width() // 2 - 420, surface.get_height() // 2 - 170, 840, 340)
+        pygame.draw.rect(surface, (28, 32, 42), modal, border_radius=10)
+        pygame.draw.rect(surface, (196, 92, 92), modal, width=2, border_radius=10)
+
+        title = theme.get_font(34, bold=True).render("The game hit an error", True, (245, 218, 218))
+        surface.blit(title, (modal.left + 20, modal.top + 20))
+
+        body_font = theme.get_font(20)
+        lines = [
+            message.strip() or "Unexpected runtime error.",
+            f"Log saved to: {self.log_path}",
+            "Press Enter or Esc to quit safely.",
+        ]
+        y = modal.top + 88
+        for raw in lines:
+            for line in wrap_text(raw, body_font, modal.width - 40):
+                rendered = body_font.render(line, True, (220, 224, 236))
+                surface.blit(rendered, (modal.left + 20, y))
+                y += 28
+            y += 6
+
+    def _show_crash_modal(self, message: str) -> None:
+        waiting = True
+        while waiting:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    waiting = False
+                elif event.type == pygame.KEYDOWN and event.key in {pygame.K_RETURN, pygame.K_ESCAPE, pygame.K_q}:
+                    waiting = False
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    waiting = False
+            self._render_crash_modal(self.screen, message)
+            pygame.display.flip()
+            self.clock.tick(30)
+
     def run(self) -> None:
         self.change_scene(IntroScene())
         while self.running:
@@ -157,10 +180,11 @@ class GameApp:
                     self.scene.update(self, dt)
                     self.scene.render(self, self.screen)
                 pygame.display.flip()
-            except Exception:
-                self.logger.error("Unhandled runtime exception:\n%s", traceback.format_exc())
+            except Exception as exc:  # noqa: BLE001
+                self.logger.exception("Unhandled runtime exception")
                 print(f"Fatal error. See log: {self.log_path}")
-                break
+                self._show_crash_modal(str(exc))
+                self.running = False
 
         try:
             self.return_staged_loadout()

@@ -10,6 +10,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "skip_intro": False,
         "show_advanced_overlay": False,
         "confirm_retreat": True,
+        "save_slots": 3,
+        "tutorial_completed": False,
+        "replay_tutorial": False,
     },
     "video": {
         "fullscreen": False,
@@ -66,4 +69,5 @@ class SettingsStore:
         return settings
 
     def save(self, settings: dict[str, Any]) -> None:
+        self.settings_path.parent.mkdir(parents=True, exist_ok=True)
         self.settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
