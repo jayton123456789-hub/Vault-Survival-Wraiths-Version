@@ -346,7 +346,7 @@ class RunScene(Scene):
 
     def render(self, app, surface: pygame.Surface) -> None:
         self._build_layout(app)
-        surface.fill(theme.COLOR_BG)
+        app.backgrounds.draw(surface, self.state.biome_id if self.state else self.biome_id)
 
         if not self.state:
             draw_text(surface, "Initializing run...", theme.get_font(28), theme.COLOR_TEXT, surface.get_rect().center, "center")

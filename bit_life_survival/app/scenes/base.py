@@ -387,7 +387,7 @@ class BaseScene(Scene):
         refill_citizen_queue(app.save_data.vault, target_size=12)
         self._build_layout(app)
 
-        surface.fill(theme.COLOR_BG)
+        app.backgrounds.draw(surface, "suburbs")
         Panel(self._top_rect, title="Vault Dashboard").draw(surface)
         Panel(self._left_rect, title="Citizen Line").draw(surface)
         Panel(self._center_rect, title="Vault Modules").draw(surface)

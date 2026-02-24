@@ -12,6 +12,7 @@ from bit_life_survival.app.services.paths import resolve_user_paths
 from bit_life_survival.app.services.saves import SaveService
 from bit_life_survival.app.services.settings_store import SettingsStore
 from bit_life_survival.app.ui import theme
+from bit_life_survival.app.ui.backgrounds import BackgroundRenderer
 from bit_life_survival.app.ui.widgets import wrap_text
 from bit_life_survival.core.loader import ContentValidationError, load_content
 from bit_life_survival.core.models import EquippedSlots
@@ -50,6 +51,7 @@ class GameApp:
         self.current_loadout = EquippedSlots()
 
         self.assets_intro_dir = self.repo_root / "bit_life_survival" / "assets" / "bbwg_intro"
+        self.backgrounds = BackgroundRenderer()
 
         self.running = True
         self.quit_after_scene = False
@@ -177,6 +179,7 @@ class GameApp:
                     if self.scene is not None:
                         self.scene.handle_event(self, event)
                 if self.scene is not None:
+                    self.backgrounds.update(dt)
                     self.scene.update(self, dt)
                     self.scene.render(self, self.screen)
                 pygame.display.flip()
