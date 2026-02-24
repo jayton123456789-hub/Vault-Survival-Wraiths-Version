@@ -4,7 +4,7 @@ import pygame
 
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import split_columns, split_rows
-from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, wrap_text
+from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 from bit_life_survival.core.crafting import can_craft, craft
 from bit_life_survival.core.models import GameState
 from bit_life_survival.core.persistence import draft_citizen_from_claw, draft_selected_citizen, refill_citizen_queue, storage_used
@@ -55,9 +55,9 @@ class BaseScene(Scene):
         app.save_data.vault.last_run_seed = seed
         app.save_data.vault.run_counter += 1
         app.save_current_slot()
-        from .run import RunScene
+        from .briefing import BriefingScene
 
-        app.change_scene(RunScene(run_seed=seed))
+        app.change_scene(BriefingScene(run_seed=seed))
 
     def _open_loadout(self, app) -> None:
         from .loadout import LoadoutScene
@@ -431,6 +431,10 @@ class BaseScene(Scene):
 
         self._draw_storage_module(app, surface)
         self._draw_right_panel(app, surface)
+        tip = hovered_tooltip(self.buttons)
+        if tip:
+            tip_rect = pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top - 34, self._bottom_rect.width - 16, 26)
+            draw_tooltip_bar(surface, tip_rect, tip)
 
         if self.message:
             draw_text(surface, self.message, theme.get_font(17), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 8), "midbottom")

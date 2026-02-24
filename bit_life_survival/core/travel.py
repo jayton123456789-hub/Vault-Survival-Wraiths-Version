@@ -117,8 +117,9 @@ def advance_travel(state: GameState, content: ContentBundle) -> list:
             state,
             "travel",
             (
-                f"Travelled {distance_delta:.2f} in '{biome.id}' "
-                f"(stamina -{stamina_drain:.2f}, hydration -{hydration_drain:.2f}, morale -{morale_drain:.2f})."
+                f"You traveled {distance_delta:.2f} miles through the {biome.name.lower()}. "
+                f"The march drained stamina ({-stamina_drain:+.1f}), hydration ({-hydration_drain:+.1f}), "
+                f"and morale ({-morale_drain:+.1f})."
             ),
             data={
                 "distanceDelta": distance_delta,

@@ -68,8 +68,13 @@ def _total_injury_resist(state: GameState, content: ContentBundle) -> float:
     return max(0.0, min(0.95, resist))
 
 
-def _format_item_counts(items: dict[str, int]) -> str:
-    return ", ".join(f"{item_id}x{qty}" for item_id, qty in sorted(items.items()))
+def _format_item_counts(items: dict[str, int], content: ContentBundle) -> str:
+    parts: list[str] = []
+    for item_id, qty in sorted(items.items()):
+        item = content.item_by_id.get(item_id)
+        label = item.name if item else item_id
+        parts.append(f"{label} x{qty}")
+    return ", ".join(parts)
 
 
 def _apply_loot_roll(
@@ -202,23 +207,25 @@ def apply_outcomes(
                 state,
                 "outcome",
                 (
-                    f"Event meters: stamina {report.meters_delta['stamina']:+.2f}, "
-                    f"hydration {report.meters_delta['hydration']:+.2f}, "
-                    f"morale {report.meters_delta['morale']:+.2f}."
+                    "Event impact: "
+                    f"stamina {report.meters_delta['stamina']:+.1f}, "
+                    f"hydration {report.meters_delta['hydration']:+.1f}, "
+                    f"morale {report.meters_delta['morale']:+.1f}."
                 ),
                 data={"metersDelta": report.meters_delta.copy()},
             )
         )
 
     if abs(report.injury_effective_delta) > 1e-9:
+        if report.injury_effective_delta > 0:
+            injury_line = f"You were hurt (+{report.injury_effective_delta:.1f} injury)."
+        else:
+            injury_line = f"You recovered ({report.injury_effective_delta:+.1f} injury)."
         logs.append(
             make_log_entry(
                 state,
                 "outcome",
-                (
-                    f"Injury delta {report.injury_effective_delta:+.2f} "
-                    f"(raw {report.injury_raw_delta:+.2f})."
-                ),
+                injury_line,
                 data={
                     "injuryRawDelta": report.injury_raw_delta,
                     "injuryEffectiveDelta": report.injury_effective_delta,
@@ -231,7 +238,7 @@ def apply_outcomes(
             make_log_entry(
                 state,
                 "outcome",
-                f"Items gained: {_format_item_counts(report.items_gained)}.",
+                f"You found: {_format_item_counts(report.items_gained, content)}.",
                 data={"itemsGained": report.items_gained.copy()},
             )
         )
@@ -241,7 +248,7 @@ def apply_outcomes(
             make_log_entry(
                 state,
                 "outcome",
-                f"Items lost: {_format_item_counts(report.items_lost)}.",
+                f"You lost: {_format_item_counts(report.items_lost, content)}.",
                 data={"itemsLost": report.items_lost.copy()},
             )
         )
@@ -276,7 +283,7 @@ def apply_outcomes(
                 make_log_entry(
                     state,
                     "death",
-                    f"Death chance triggered ({chance * 100:.1f}% chance, roll {roll:.4f}).",
+                    f"A fatal outcome triggered ({chance * 100:.1f}% risk, roll {roll:.4f}).",
                     data={"deathChance": chance, "roll": roll, "triggered": True},
                 )
             )
@@ -285,7 +292,7 @@ def apply_outcomes(
                 make_log_entry(
                     state,
                     "outcome",
-                    f"Survived death chance ({chance * 100:.1f}% chance, roll {roll:.4f}).",
+                    f"You survived a close call ({chance * 100:.1f}% risk, roll {roll:.4f}).",
                     data={"deathChance": chance, "roll": roll, "triggered": False},
                 )
             )

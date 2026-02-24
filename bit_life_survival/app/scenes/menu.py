@@ -7,7 +7,7 @@ import pygame
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import anchored_rect, split_columns, split_rows
 from bit_life_survival.app.ui.modal import Modal, ModalButton
-from bit_life_survival.app.ui.widgets import Button, Panel, draw_text, wrap_text
+from bit_life_survival.app.ui.widgets import Button, Panel, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 
 from .core import Scene
 
@@ -275,9 +275,13 @@ class MainMenuScene(Scene):
         mouse_pos = pygame.mouse.get_pos()
         for button in self.buttons:
             button.draw(surface, mouse_pos)
+        tip = hovered_tooltip(self.buttons)
+        if tip:
+            tip_rect = pygame.Rect(self._actions_rect.left, self._actions_rect.bottom + 8, self._actions_rect.width, 26)
+            draw_tooltip_bar(surface, tip_rect, tip)
 
         if self.rename_mode:
-            rename_rect = pygame.Rect(self._actions_rect.left, self._actions_rect.bottom + 8, self._actions_rect.width, 44)
+            rename_rect = pygame.Rect(self._actions_rect.left, self._actions_rect.bottom + 38, self._actions_rect.width, 44)
             pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, rename_rect, border_radius=6)
             pygame.draw.rect(surface, theme.COLOR_BORDER, rename_rect, width=1, border_radius=6)
             draw_text(surface, f"Rename: {self.rename_text}_", theme.get_font(16), theme.COLOR_TEXT, (rename_rect.left + 10, rename_rect.centery), "midleft")

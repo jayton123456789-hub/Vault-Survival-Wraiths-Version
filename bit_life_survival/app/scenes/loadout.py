@@ -5,7 +5,7 @@ import pygame
 from bit_life_survival.app.services.loadout_planner import RUN_SLOTS, choose_best_for_slot, format_choice_reason
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import split_columns, split_rows
-from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, wrap_text
+from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 from bit_life_survival.core.models import GameState
 from bit_life_survival.core.persistence import store_item, take_item
 from bit_life_survival.core.travel import compute_loadout_summary
@@ -285,5 +285,9 @@ class LoadoutScene(Scene):
             item = app.content.item_by_id.get(self.selected_item_id)
             selected_name = item.name if item else self.selected_item_id
             draw_text(surface, f"Selected: {selected_name}", theme.get_font(16), theme.COLOR_ACCENT, (self._left_rect.left + 14, self._left_rect.bottom - 18), "midleft")
+        tip = hovered_tooltip(self.buttons)
+        if tip:
+            tip_rect = pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top - 34, self._bottom_rect.width - 16, 26)
+            draw_tooltip_bar(surface, tip_rect, tip)
         if self.message:
             draw_text(surface, self.message, theme.get_font(17), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 8), "midbottom")

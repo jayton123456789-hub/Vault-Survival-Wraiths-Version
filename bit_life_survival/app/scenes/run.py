@@ -7,7 +7,7 @@ import pygame
 
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import split_columns, split_rows
-from bit_life_survival.app.ui.widgets import Button, Panel, ProgressBar, draw_text, wrap_text
+from bit_life_survival.app.ui.widgets import Button, Panel, ProgressBar, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 from bit_life_survival.core.drone import run_drone_recovery
 from bit_life_survival.core.engine import EventInstance, apply_choice_with_state_rng_detailed, create_initial_state, advance_to_next_event
 from bit_life_survival.core.models import EquippedSlots, LogEntry, make_log_entry
@@ -37,8 +37,10 @@ class ResultOverlay:
 
 
 class RunScene(Scene):
-    def __init__(self, run_seed: int | str) -> None:
+    def __init__(self, run_seed: int | str, biome_id: str = "suburbs", auto_step_once: bool = False) -> None:
         self.run_seed = run_seed
+        self.biome_id = biome_id
+        self.auto_step_once = auto_step_once
         self.state = None
         self.logs: list[LogEntry] = []
         self.show_full_log = False
@@ -54,12 +56,15 @@ class RunScene(Scene):
         self._last_size: tuple[int, int] | None = None
 
     def on_enter(self, app) -> None:
-        self.state = create_initial_state(self.run_seed, "suburbs")
+        self._app = app
+        self.state = create_initial_state(self.run_seed, self.biome_id)
         self.state.equipped = app.current_loadout.model_copy(deep=True)
         if not app.save_data.vault.settings.seen_run_help:
             self.help_overlay = True
             app.save_data.vault.settings.seen_run_help = True
             app.save_current_slot()
+        if self.auto_step_once:
+            self._continue_step(app)
 
     def _carry_stats(self) -> tuple[int, int]:
         if not self.state:
@@ -75,7 +80,7 @@ class RunScene(Scene):
         self.state.dead = True
         self.state.death_reason = reason
         self.state.death_flags.add("retreated_early")
-        self.logs.append(make_log_entry(self.state, "system", f"{reason} (recovery penalty applied)."))
+        self._append_logs(self._app, [make_log_entry(self.state, "system", f"{reason} (recovery penalty applied).")])
         self._finish_kind = "retreat"
 
     def _extract_travel_delta(self, step_logs: list[LogEntry]) -> dict[str, float]:
@@ -90,11 +95,18 @@ class RunScene(Scene):
                 }
         return {"stamina": 0.0, "hydration": 0.0, "morale": 0.0}
 
+    def _append_logs(self, app, new_logs: list[LogEntry]) -> None:
+        if not new_logs:
+            return
+        self.logs.extend(new_logs)
+        for entry in new_logs:
+            app.gameplay_logger.info("[%s] %s", entry.type, entry.line)
+
     def _continue_step(self, app) -> None:
         if not self.state or self.event_overlay or self.result_overlay:
             return
         _, event_instance, step_logs = advance_to_next_event(self.state, app.content)
-        self.logs.extend(step_logs)
+        self._append_logs(app, step_logs)
         if self.state.dead:
             return
         if event_instance is not None:
@@ -112,7 +124,7 @@ class RunScene(Scene):
             self.message = "Option is locked."
             return
         resolution = apply_choice_with_state_rng_detailed(self.state, event_instance, option.id, self._app.content)
-        self.logs.extend(resolution.logs)
+        self._append_logs(self._app, resolution.logs)
         self.result_overlay = ResultOverlay(
             event_title=event_instance.title,
             option_label=option.label,
@@ -152,12 +164,56 @@ class RunScene(Scene):
         self.hud_rect = body_cols[1]
         self.bottom_rect = rows[2]
 
-        controls = split_columns(pygame.Rect(self.bottom_rect.left + 8, self.bottom_rect.top + 10, self.bottom_rect.width - 16, self.bottom_rect.height - 20), [2.2, 1, 1, 1, 1], gap=10)
-        self.buttons.append(Button(controls[0], "Continue", hotkey=pygame.K_c, on_click=lambda: self._continue_step(app)))
-        self.buttons.append(Button(controls[1], "Log", hotkey=pygame.K_l, on_click=lambda: setattr(self, "show_full_log", not self.show_full_log)))
-        self.buttons.append(Button(controls[2], "Retreat", hotkey=pygame.K_r, on_click=lambda: self._request_retreat(app)))
-        self.buttons.append(Button(controls[3], "Help", hotkey=pygame.K_h, on_click=lambda: setattr(self, "help_overlay", True)))
-        self.buttons.append(Button(controls[4], "Quit", hotkey=pygame.K_q, on_click=lambda: self._quit_desktop(app)))
+        controls = split_columns(
+            pygame.Rect(self.bottom_rect.left + 8, self.bottom_rect.top + 10, self.bottom_rect.width - 16, self.bottom_rect.height - 20),
+            [2.2, 1, 1, 1, 1],
+            gap=10,
+        )
+        self.buttons.append(
+            Button(
+                controls[0],
+                "Continue Until Next Event",
+                hotkey=pygame.K_c,
+                on_click=lambda: self._continue_step(app),
+                tooltip="Travel forward and trigger the next event.",
+            )
+        )
+        self.buttons.append(
+            Button(
+                controls[1],
+                "Show Log",
+                hotkey=pygame.K_l,
+                on_click=lambda: setattr(self, "show_full_log", not self.show_full_log),
+                tooltip="Toggle condensed/full timeline feed.",
+            )
+        )
+        self.buttons.append(
+            Button(
+                controls[2],
+                "Retreat",
+                hotkey=pygame.K_r,
+                on_click=lambda: self._request_retreat(app),
+                tooltip="Return to vault early with a drone recovery penalty.",
+            )
+        )
+        self.buttons.append(
+            Button(
+                controls[3],
+                "Help",
+                hotkey=pygame.K_h,
+                on_click=lambda: setattr(self, "help_overlay", True),
+                tooltip="Show controls and run system guide.",
+            )
+        )
+        self.buttons.append(
+            Button(
+                controls[4],
+                "Quit",
+                hotkey=pygame.K_q,
+                on_click=lambda: self._quit_desktop(app),
+                tooltip="Quit to desktop after ending this run.",
+            )
+        )
 
     def _request_retreat(self, app) -> None:
         if bool(app.settings["gameplay"].get("confirm_retreat", True)):
@@ -263,7 +319,7 @@ class RunScene(Scene):
 
         # Timeline feed
         visible_count = 28 if self.show_full_log else 14
-        lines = [entry.format() for entry in self.logs[-visible_count:]]
+        lines = [self._timeline_line(entry) for entry in self.logs[-visible_count:]]
         y = self.timeline_rect.top + 40
         for line in lines:
             for wrapped in wrap_text(line, theme.get_font(15), self.timeline_rect.width - 24):
@@ -303,6 +359,11 @@ class RunScene(Scene):
         mouse_pos = pygame.mouse.get_pos()
         for button in self.buttons:
             button.draw(surface, mouse_pos)
+
+        tip = hovered_tooltip(self.buttons)
+        if tip:
+            tip_rect = pygame.Rect(self.bottom_rect.left + 8, self.bottom_rect.top - 34, self.bottom_rect.width - 16, 26)
+            draw_tooltip_bar(surface, tip_rect, tip)
 
         if self.message:
             draw_text(surface, self.message, theme.get_font(18), theme.COLOR_WARNING, (self.bottom_rect.centerx, self.bottom_rect.top - 6), "midbottom")
@@ -426,3 +487,14 @@ class RunScene(Scene):
         Panel(rect, title="Confirm Retreat").draw(surface)
         draw_text(surface, "Retreat now? Recovery penalty will apply.", theme.get_font(20), theme.COLOR_TEXT, (rect.centerx, rect.centery - 10), "center")
         draw_text(surface, "Press Y to confirm, N to cancel.", theme.get_font(17), theme.COLOR_TEXT_MUTED, (rect.centerx, rect.centery + 26), "center")
+
+    def _timeline_line(self, entry: LogEntry) -> str:
+        prefix = {
+            "travel": "Travel",
+            "event": "Event",
+            "choice": "Choice",
+            "outcome": "Result",
+            "death": "Death",
+            "system": "System",
+        }.get(entry.type, entry.type.title())
+        return f"{prefix}: {entry.line}"

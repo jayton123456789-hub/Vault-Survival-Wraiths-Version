@@ -200,3 +200,16 @@ class ScrollList:
                 pygame.draw.rect(surface, theme.COLOR_ACCENT_SOFT, row_rect, border_radius=6)
             draw_text(surface, self.items[index], font, theme.COLOR_TEXT, (row_rect.left + 8, row_rect.centery), "midleft")
             y += self.row_height
+
+
+def hovered_tooltip(buttons: list[Button]) -> str | None:
+    for button in buttons:
+        if button.hovered and button.tooltip:
+            return button.tooltip
+    return None
+
+
+def draw_tooltip_bar(surface: pygame.Surface, rect: pygame.Rect, text: str) -> None:
+    pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, rect, border_radius=6)
+    pygame.draw.rect(surface, theme.COLOR_BORDER, rect, width=1, border_radius=6)
+    draw_text(surface, text, theme.get_font(15), theme.COLOR_TEXT_MUTED, (rect.left + 10, rect.centery), "midleft")
