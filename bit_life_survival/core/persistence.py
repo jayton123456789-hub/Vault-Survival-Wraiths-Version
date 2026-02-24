@@ -196,3 +196,13 @@ def draft_citizen_from_claw(vault: VaultState, preview_count: int = 5) -> Citize
     _save_claw_rng(vault, rng)
     refill_citizen_queue(vault, target_size=DEFAULT_QUEUE_TARGET)
     return selected
+
+
+def draft_selected_citizen(vault: VaultState, citizen_id: str) -> Citizen:
+    for idx, candidate in enumerate(vault.citizen_queue):
+        if candidate.id == citizen_id:
+            selected = vault.citizen_queue.pop(idx)
+            vault.current_citizen = selected
+            refill_citizen_queue(vault, target_size=DEFAULT_QUEUE_TARGET)
+            return selected
+    raise ValueError(f"Citizen '{citizen_id}' not found in queue.")

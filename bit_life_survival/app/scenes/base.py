@@ -7,7 +7,7 @@ from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, wrap_text
 from bit_life_survival.core.crafting import can_craft, craft
 from bit_life_survival.core.models import GameState
-from bit_life_survival.core.persistence import draft_citizen_from_claw, refill_citizen_queue, storage_used
+from bit_life_survival.core.persistence import draft_citizen_from_claw, draft_selected_citizen, refill_citizen_queue, storage_used
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
@@ -29,6 +29,9 @@ class BaseScene(Scene):
         self.selected_storage_item_id: str | None = None
         self.selected_slot_filter = "all"
         self.selected_rarity_filter = "all"
+        self.citizen_scroll: ScrollList | None = None
+        self._citizen_rows: list[str] = []
+        self.selected_citizen_index: int | None = None
 
     def _draw_top_bar(self, app, surface: pygame.Surface, rect: pygame.Rect) -> None:
         vault = app.save_data.vault
@@ -76,6 +79,37 @@ class BaseScene(Scene):
         drafted = draft_citizen_from_claw(app.save_data.vault, preview_count=5)
         app.save_current_slot()
         self.message = f"Drafted {drafted.name}."
+
+    def _draft_selected(self, app) -> None:
+        if self.selected_citizen_index is None:
+            self.message = "Select a citizen from the line first."
+            return
+        queue = app.save_data.vault.citizen_queue
+        if self.selected_citizen_index < 0 or self.selected_citizen_index >= len(queue):
+            self.message = "Selected citizen is no longer available."
+            return
+        drafted = draft_selected_citizen(app.save_data.vault, queue[self.selected_citizen_index].id)
+        app.save_current_slot()
+        self.message = f"Drafted {drafted.name} from queue."
+        self._refresh_citizen_rows(app)
+
+    def _refresh_citizen_rows(self, app) -> None:
+        queue = app.save_data.vault.citizen_queue
+        self._citizen_rows = [f"{idx + 1:02d}. {citizen.name}" for idx, citizen in enumerate(queue)]
+        if self.citizen_scroll:
+            self.citizen_scroll.set_items(self._citizen_rows)
+        if self.selected_citizen_index is not None and self.selected_citizen_index >= len(queue):
+            self.selected_citizen_index = None
+
+    def _on_select_citizen(self, index: int) -> None:
+        if 0 <= index < len(self._citizen_rows):
+            self.selected_citizen_index = index
+
+    def _selected_citizen(self, app):
+        if self.selected_citizen_index is not None:
+            if 0 <= self.selected_citizen_index < len(app.save_data.vault.citizen_queue):
+                return app.save_data.vault.citizen_queue[self.selected_citizen_index]
+        return None
 
     def _cycle_storage_filter(self, app, which: str) -> None:
         if which == "slot":
@@ -150,6 +184,18 @@ class BaseScene(Scene):
                 tooltip="Draft the next citizen for deployment.",
             )
         )
+        self.buttons.append(
+            Button(
+                pygame.Rect(self._left_rect.left + 12, self._left_rect.bottom - 94, self._left_rect.width - 24, 36),
+                "Draft Selected",
+                hotkey=pygame.K_RETURN,
+                on_click=lambda: self._draft_selected(app),
+                tooltip="Draft the currently selected citizen in line.",
+            )
+        )
+        citizen_list_rect = pygame.Rect(self._left_rect.left + 12, self._left_rect.top + 46, self._left_rect.width - 24, self._left_rect.height - 220)
+        self.citizen_scroll = ScrollList(citizen_list_rect, row_height=24, on_select=self._on_select_citizen)
+        self._refresh_citizen_rows(app)
 
         module_row = pygame.Rect(self._center_rect.left + 12, self._center_rect.top + 40, self._center_rect.width - 24, 44)
         modules = split_columns(module_row, [1, 1, 1], gap=8)
@@ -217,6 +263,8 @@ class BaseScene(Scene):
             self.message = "Vault help: U claw, L loadout, D deploy, S settings, H help."
             return
         if self.storage_scroll and self.storage_scroll.handle_event(event):
+            return
+        if self.citizen_scroll and self.citizen_scroll.handle_event(event):
             return
         for button in self.buttons:
             if button.handle_event(event):
@@ -354,12 +402,26 @@ class BaseScene(Scene):
         queue = app.save_data.vault.citizen_queue[:5]
         y = self._left_rect.top + 48
         draw_text(surface, f"Queued Citizens: {len(app.save_data.vault.citizen_queue)}", theme.get_font(18), theme.COLOR_TEXT, (self._left_rect.left + 12, y))
-        y += 28
-        for citizen in queue:
-            draw_text(surface, f"- {citizen.name} ({citizen.quirk})", theme.get_font(16), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 14, y))
-            y += 24
+        y += 30
+        if self.citizen_scroll:
+            self.citizen_scroll.draw(surface)
+        selected = self._selected_citizen(app)
+        y = self._left_rect.bottom - 170
+        draw_text(surface, "Citizen Details", theme.get_font(16, bold=True), theme.COLOR_TEXT, (self._left_rect.left + 12, y))
+        y += 22
+        if selected:
+            draw_text(surface, f"{selected.name}", theme.get_font(16, bold=True), theme.COLOR_SUCCESS, (self._left_rect.left + 12, y))
+            y += 20
+            draw_text(surface, selected.quirk, theme.get_font(14), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 12, y))
+            y += 20
+            kit = ", ".join(f"{item} x{qty}" for item, qty in sorted(selected.kit.items())) or "None"
+            for line in wrap_text(f"Kit: {kit}", theme.get_font(13), self._left_rect.width - 24):
+                draw_text(surface, line, theme.get_font(13), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 12, y))
+                y += 16
+        else:
+            draw_text(surface, "Select a citizen to inspect kit.", theme.get_font(14), theme.COLOR_TEXT_MUTED, (self._left_rect.left + 12, y))
+            y += 20
         current = app.save_data.vault.current_citizen
-        y += 12
         draw_text(surface, "Current Draft:", theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._left_rect.left + 12, y))
         y += 24
         if current:
