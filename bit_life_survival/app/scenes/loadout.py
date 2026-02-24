@@ -31,6 +31,16 @@ class LoadoutScene(Scene):
         self._slot_buttons: dict[str, Button] = {}
         self.help_overlay = False
 
+    def on_enter(self, app) -> None:
+        citizen = app.save_data.vault.current_citizen if app.save_data else None
+        if citizen is not None:
+            app.current_loadout = citizen.loadout.model_copy(deep=True)
+
+    def _sync_citizen_loadout(self, app) -> None:
+        citizen = app.save_data.vault.current_citizen if app.save_data else None
+        if citizen is not None:
+            citizen.loadout = app.current_loadout.model_copy(deep=True)
+
     def _allowed_slot(self, run_slot: str) -> str:
         return "utility" if run_slot in {"utility1", "utility2"} else run_slot
 
@@ -96,6 +106,7 @@ class LoadoutScene(Scene):
         if current:
             store_item(app.save_data.vault, current, 1)
         setattr(app.current_loadout, run_slot, item.id)
+        self._sync_citizen_loadout(app)
         self.message = f"Equipped {item.name} to {run_slot}."
         app.save_current_slot()
         self._refresh_inventory(app)
@@ -122,6 +133,7 @@ class LoadoutScene(Scene):
             self.message = f"Unable to reserve {choice.item_id}."
             return False
         setattr(app.current_loadout, run_slot, choice.item_id)
+        self._sync_citizen_loadout(app)
         self.message = format_choice_reason(app.content, choice)
         return True
 
@@ -147,6 +159,7 @@ class LoadoutScene(Scene):
             reserved[choice.item_id] = reserved.get(choice.item_id, 0) + 1
             setattr(app.current_loadout, run_slot, choice.item_id)
             lines.append(format_choice_reason(app.content, choice))
+        self._sync_citizen_loadout(app)
         app.save_current_slot()
         self._refresh_inventory(app)
         self.message = " ".join(lines[:2]) if lines else "No available gear to auto-equip."
@@ -158,6 +171,7 @@ class LoadoutScene(Scene):
         seed = app.compute_run_seed()
         app.save_data.vault.last_run_seed = seed
         app.save_data.vault.run_counter += 1
+        self._sync_citizen_loadout(app)
         app.save_current_slot()
         from .briefing import BriefingScene
 
@@ -217,6 +231,7 @@ class LoadoutScene(Scene):
 
     def _clear_all(self, app) -> None:
         self._unequip_all(app)
+        self._sync_citizen_loadout(app)
         app.save_current_slot()
         self._refresh_inventory(app)
         self.message = "Cleared all equipped items."
@@ -246,7 +261,7 @@ class LoadoutScene(Scene):
         Panel(self._left_rect, title="Inventory").draw(surface)
         Panel(self._right_rect, title="Loadout").draw(surface)
         Panel(self._bottom_rect).draw(surface)
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = app.virtual_mouse_pos()
 
         for button in self.buttons:
             button.draw(surface, mouse_pos)

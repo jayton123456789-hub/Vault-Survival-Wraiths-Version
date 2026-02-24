@@ -81,6 +81,7 @@ class BaseScene(Scene):
 
     def _claw(self, app) -> None:
         drafted = draft_citizen_from_claw(app.save_data.vault, preview_count=5)
+        app.current_loadout = drafted.loadout.model_copy(deep=True)
         app.save_current_slot()
         self.message = f"Drafted {drafted.name}."
 
@@ -93,6 +94,7 @@ class BaseScene(Scene):
             self.message = "Selected citizen is no longer available."
             return
         drafted = draft_selected_citizen(app.save_data.vault, queue[self.selected_citizen_index].id)
+        app.current_loadout = drafted.loadout.model_copy(deep=True)
         app.save_current_slot()
         self.message = f"Drafted {drafted.name} from queue."
         self._refresh_citizen_rows(app)
@@ -455,7 +457,7 @@ class BaseScene(Scene):
         refill_citizen_queue(app.save_data.vault, target_size=12)
         self._build_layout(app)
 
-        app.backgrounds.draw(surface, "suburbs")
+        app.backgrounds.draw(surface, "vault")
         Panel(self._top_rect, title="Vault Dashboard").draw(surface)
         Panel(self._left_rect, title="Citizen Line").draw(surface)
         Panel(self._center_rect, title="Vault Modules").draw(surface)
@@ -463,7 +465,7 @@ class BaseScene(Scene):
         Panel(self._bottom_rect).draw(surface)
 
         self._draw_top_bar(app, surface, self._top_rect)
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
             if button.text == "Craft Selected":
                 recipe = app.content.recipe_by_id.get(self.selected_recipe_id) if self.selected_recipe_id else None

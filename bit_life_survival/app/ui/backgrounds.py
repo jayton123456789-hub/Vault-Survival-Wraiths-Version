@@ -18,12 +18,32 @@ class BackgroundRenderer:
         self.t += dt
 
     def draw(self, surface: pygame.Surface, biome_id: str) -> None:
-        if biome_id == "forest":
+        if biome_id == "vault":
+            self._draw_vault(surface)
+        elif biome_id == "forest":
             self._draw_forest(surface)
         elif biome_id == "industrial":
             self._draw_industrial(surface)
         else:
             self._draw_suburbs(surface)
+
+    def _draw_vault(self, surface: pygame.Surface) -> None:
+        self._draw_gradient(surface, (32, 18, 34), (53, 30, 58))
+        w, h = surface.get_size()
+        brick_w = 34
+        brick_h = 14
+        for row in range((h // brick_h) + 2):
+            y = row * brick_h
+            offset = 0 if row % 2 == 0 else brick_w // 2
+            for col in range((w // brick_w) + 3):
+                x = col * brick_w - offset
+                shade_shift = ((row + col) % 3) * 5
+                color = (64 + shade_shift, 36 + shade_shift // 2, 72 + shade_shift)
+                brick = pygame.Rect(x, y, brick_w - 1, brick_h - 1)
+                pygame.draw.rect(surface, color, brick)
+        vignette = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(vignette, (0, 0, 0, 42), vignette.get_rect(), width=40)
+        surface.blit(vignette, (0, 0))
 
     def _draw_gradient(self, surface: pygame.Surface, top: tuple[int, int, int], bottom: tuple[int, int, int]) -> None:
         w, h = surface.get_size()

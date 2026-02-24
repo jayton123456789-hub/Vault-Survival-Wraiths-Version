@@ -4,17 +4,15 @@ setlocal
 cd /d "%~dp0\.."
 
 set "BOOTSTRAP_PY="
+set "BOOTSTRAP_ARGS="
 if exist ".venv\Scripts\python.exe" (
     set "BOOTSTRAP_PY=.venv\Scripts\python.exe"
 )
-if not defined BOOTSTRAP_PY if exist "C:\Users\nickb\AppData\Local\Programs\Python\Python313\python.exe" (
-    set "BOOTSTRAP_PY=C:\Users\nickb\AppData\Local\Programs\Python\Python313\python.exe"
+if not defined BOOTSTRAP_PY (
+    py -3.11 -V >nul 2>&1 && set "BOOTSTRAP_PY=py" && set "BOOTSTRAP_ARGS=-3.11"
 )
-if not defined BOOTSTRAP_PY if exist "C:\Users\nickb\AppData\Local\Programs\Python\Python312\python.exe" (
-    set "BOOTSTRAP_PY=C:\Users\nickb\AppData\Local\Programs\Python\Python312\python.exe"
-)
-if not defined BOOTSTRAP_PY if exist "C:\Users\nickb\AppData\Local\Programs\Python\Python311\python.exe" (
-    set "BOOTSTRAP_PY=C:\Users\nickb\AppData\Local\Programs\Python\Python311\python.exe"
+if not defined BOOTSTRAP_PY (
+    py -V >nul 2>&1 && set "BOOTSTRAP_PY=py"
 )
 if not defined BOOTSTRAP_PY (
     python -V >nul 2>&1 && set "BOOTSTRAP_PY=python"
@@ -28,7 +26,7 @@ if not defined BOOTSTRAP_PY (
 
 if not exist ".venv\Scripts\python.exe" (
     echo Creating virtual environment...
-    "%BOOTSTRAP_PY%" -m venv .venv
+    "%BOOTSTRAP_PY%" %BOOTSTRAP_ARGS% -m venv .venv
     if errorlevel 1 goto :fail
 )
 

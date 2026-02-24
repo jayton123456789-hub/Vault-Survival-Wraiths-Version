@@ -126,6 +126,6 @@ class BriefingScene(Scene):
                 draw_text(surface, wrapped, theme.get_font(15), theme.COLOR_TEXT_MUTED, (right.left + 12, y))
                 y += 20
 
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
             button.draw(surface, mouse_pos)

@@ -235,8 +235,8 @@ class MainMenuScene(Scene):
         self._build_layout(app)
         surface.fill(theme.COLOR_BG)
 
-        draw_text(surface, "Bit Life Survival", theme.get_font(54, bold=True), theme.COLOR_TEXT, (surface.get_width() // 2, 76), "center")
-        draw_text(surface, "Vault Command Console", theme.get_font(20), theme.COLOR_TEXT_MUTED, (surface.get_width() // 2, 112), "center")
+        draw_text(surface, "VAULT SURVIVAL", theme.get_font(58, bold=True), theme.COLOR_TEXT, (surface.get_width() // 2, 76), "center")
+        draw_text(surface, "Vault Command Console", theme.get_font(20), theme.COLOR_TEXT_MUTED, (surface.get_width() // 2, 116), "center")
 
         Panel(self._panel_rect, title="Main Menu").draw(surface)
         pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._slots_rect, border_radius=8)
@@ -272,7 +272,7 @@ class MainMenuScene(Scene):
                     draw_text(surface, wrapped, theme.get_font(14), theme.COLOR_TEXT_MUTED, (rect.left + 12, y))
                     y += 16
 
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
             button.draw(surface, mouse_pos)
         tip = hovered_tooltip(self.buttons)

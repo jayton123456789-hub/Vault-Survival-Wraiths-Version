@@ -7,6 +7,7 @@ import pygame
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import anchored_rect, split_columns
 from bit_life_survival.app.ui.widgets import Button, Panel, draw_text
+from bit_life_survival.core.settings import default_settings
 
 from .core import Scene
 
@@ -52,7 +53,7 @@ class SettingsScene(Scene):
     def _cycle_save_slots(self, app) -> None:
         current = int(app.settings["gameplay"].get("save_slots", 3))
         current += 1
-        if current > 6:
+        if current > 5:
             current = 3
         app.settings["gameplay"]["save_slots"] = current
         app.save_settings()
@@ -72,9 +73,10 @@ class SettingsScene(Scene):
             self.buttons.append(Button(col, label, on_click=lambda t=tab_key: setattr(self, "tab", t)))
 
         footer = pygame.Rect(panel_rect.left + 20, panel_rect.bottom - 48, panel_rect.width - 40, 34)
-        footer_cols = split_columns(footer, [1, 1], gap=12)
+        footer_cols = split_columns(footer, [1, 1, 1], gap=12)
         self.buttons.append(Button(footer_cols[0], "Back", hotkey=pygame.K_ESCAPE, on_click=lambda: self._go_back(app)))
-        self.buttons.append(Button(footer_cols[1], "Apply", hotkey=pygame.K_RETURN, on_click=lambda: self._apply(app)))
+        self.buttons.append(Button(footer_cols[1], "Reset Defaults", on_click=lambda: self._reset_defaults(app)))
+        self.buttons.append(Button(footer_cols[2], "Apply", hotkey=pygame.K_RETURN, on_click=lambda: self._apply(app)))
 
         content = pygame.Rect(panel_rect.left + 20, panel_rect.top + 105, panel_rect.width - 40, panel_rect.height - 170)
 
@@ -112,7 +114,7 @@ class SettingsScene(Scene):
                 )
             )
         elif self.tab == "video":
-            rows = [pygame.Rect(content.left, content.top + i * 56, content.width, 44) for i in range(3)]
+            rows = [pygame.Rect(content.left, content.top + i * 56, content.width, 44) for i in range(4)]
             res = tuple(app.settings["video"].get("resolution", [1280, 720]))
             scale = float(app.settings["video"].get("ui_scale", 1.0))
             self.buttons.append(
@@ -123,6 +125,9 @@ class SettingsScene(Scene):
             )
             self.buttons.append(
                 Button(rows[2], f"UI Scale: {scale:.2f}", on_click=lambda: self._cycle_value(app, "video", "ui_scale", self.UI_SCALES))
+            )
+            self.buttons.append(
+                Button(rows[3], f"VSync: {bool(app.settings['video'].get('vsync', False))}", on_click=lambda: self._toggle(app, "video", "vsync"))
             )
         elif self.tab == "audio":
             rows = [pygame.Rect(content.left, content.top + i * 62, content.width, 48) for i in range(3)]
@@ -150,6 +155,12 @@ class SettingsScene(Scene):
         app.save_settings()
         self.message = "Tutorial will replay when you enter the next run."
 
+    def _reset_defaults(self, app) -> None:
+        app.settings = default_settings()
+        app.save_settings()
+        app.apply_video_settings()
+        self.message = "Settings reset to defaults."
+
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
             app.quit()
@@ -166,7 +177,7 @@ class SettingsScene(Scene):
         panel_rect = anchored_rect(surface.get_rect(), (940, 620))
         Panel(panel_rect, title="Settings").draw(surface)
 
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
             button.draw(surface, mouse_pos)
 

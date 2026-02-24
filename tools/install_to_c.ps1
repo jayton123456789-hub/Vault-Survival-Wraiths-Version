@@ -1,12 +1,14 @@
 param(
     [string]$InstallRoot = "C:\BitLifeSurvival",
-    [switch]$PrintOnly
+    [switch]$PrintOnly,
+    [switch]$CreateShortcut
 )
 
 $ErrorActionPreference = "Stop"
 
 $sourceRepo = (Resolve-Path "$PSScriptRoot\..").Path
 $targetRepo = Join-Path $InstallRoot "Vault_Bit_Survival"
+
 $saveDir = Join-Path $InstallRoot "saves"
 $logDir = Join-Path $InstallRoot "logs"
 $configDir = Join-Path $InstallRoot "config"
@@ -41,8 +43,21 @@ if ($PrintOnly) {
     robocopy @roboArgs | Out-Null
 }
 
+if ($CreateShortcut) {
+    $shortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "Bit Life Survival.lnk"
+    $targetCmd = Join-Path $targetRepo "tools\run_game.cmd"
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $targetCmd
+    $shortcut.WorkingDirectory = $targetRepo
+    $shortcut.WindowStyle = 1
+    $shortcut.Description = "Run Bit Life Survival"
+    $shortcut.Save()
+    Write-Host "Created desktop shortcut: $shortcutPath"
+}
+
 Write-Host ""
-Write-Host "User data initialized:"
+Write-Host "Runtime data initialized:"
 Write-Host "  Saves:  $saveDir"
 Write-Host "  Logs:   $logDir"
 Write-Host "  Config: $configDir"

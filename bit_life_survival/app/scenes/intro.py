@@ -22,7 +22,7 @@ class IntroScene(Scene):
         else:
             try:
                 play_intro(
-                    screen=app.screen,
+                    screen=app.window,
                     clock=app.clock,
                     assets_dir=app.assets_intro_dir,
                     allow_skip=True,

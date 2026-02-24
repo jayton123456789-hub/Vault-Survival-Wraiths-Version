@@ -13,6 +13,7 @@ from bit_life_survival.app.services.saves import SaveService
 from bit_life_survival.app.services.settings_store import SettingsStore
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.backgrounds import BackgroundRenderer
+from bit_life_survival.app.ui.pixel_renderer import PixelRenderer
 from bit_life_survival.app.ui.widgets import wrap_text
 from bit_life_survival.core.loader import ContentValidationError, load_content
 from bit_life_survival.core.models import EquippedSlots
@@ -59,7 +60,13 @@ class GameApp:
 
         pygame.init()
         self.clock = pygame.time.Clock()
-        self.screen = pygame.display.set_mode(theme.DEFAULT_RESOLUTION, pygame.RESIZABLE)
+        self.pixel_renderer = PixelRenderer(
+            virtual_width=theme.VIRTUAL_RESOLUTION[0],
+            virtual_height=theme.VIRTUAL_RESOLUTION[1],
+        )
+        self.window = pygame.display.set_mode(theme.DEFAULT_RESOLUTION, pygame.RESIZABLE)
+        self.pixel_renderer.set_window_size(self.window.get_size())
+        self.screen = self.pixel_renderer.create_canvas()
         pygame.display.set_caption(theme.WINDOW_TITLE)
         self.apply_video_settings()
 
@@ -81,8 +88,13 @@ class GameApp:
         flags = pygame.RESIZABLE
         if fullscreen:
             flags |= pygame.FULLSCREEN
-        self.screen = pygame.display.set_mode(resolution, flags)
+        self.window = pygame.display.set_mode(resolution, flags)
+        self.pixel_renderer.set_window_size(self.window.get_size())
+        self.screen = self.pixel_renderer.create_canvas()
         pygame.display.set_caption(theme.WINDOW_TITLE)
+
+    def virtual_mouse_pos(self) -> tuple[int, int]:
+        return self.pixel_renderer.window_to_virtual(pygame.mouse.get_pos())
 
     def load_slot(self, slot: int) -> None:
         self.return_staged_loadout()
@@ -167,6 +179,7 @@ class GameApp:
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     waiting = False
             self._render_crash_modal(self.screen, message)
+            self.pixel_renderer.present(self.window, self.screen)
             pygame.display.flip()
             self.clock.tick(30)
 
@@ -176,12 +189,15 @@ class GameApp:
             dt = self.clock.tick(60) / 1000.0
             try:
                 for event in pygame.event.get():
+                    if event.type == pygame.WINDOWRESIZED:
+                        self.pixel_renderer.set_window_size((event.x, event.y))
                     if self.scene is not None:
-                        self.scene.handle_event(self, event)
+                        self.scene.handle_event(self, self.pixel_renderer.transform_event(event))
                 if self.scene is not None:
                     self.backgrounds.update(dt)
                     self.scene.update(self, dt)
                     self.scene.render(self, self.screen)
+                self.pixel_renderer.present(self.window, self.screen)
                 pygame.display.flip()
             except Exception as exc:  # noqa: BLE001
                 self.logger.exception("Unhandled runtime exception")

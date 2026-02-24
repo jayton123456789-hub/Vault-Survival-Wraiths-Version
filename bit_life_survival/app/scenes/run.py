@@ -151,8 +151,22 @@ class RunScene(Scene):
         if not new_logs:
             return
         self.logs.extend(new_logs)
+        category_map = {
+            "travel": "TRAVEL",
+            "event": "EVENT",
+            "choice": "CHOICE",
+            "outcome": "OUTCOME",
+            "death": "INJURY",
+            "system": "SYSTEM",
+        }
         for entry in new_logs:
             app.gameplay_logger.info("[%s] %s", entry.type, entry.line)
+            if self.state:
+                self.state.append_run_log(
+                    category=category_map.get(entry.type, "SYSTEM"),
+                    message=entry.line,
+                    details=entry.data or {},
+                )
 
     def _continue_step(self, app) -> None:
         if not self.state or self.event_overlay or self.result_overlay:
@@ -469,7 +483,7 @@ class RunScene(Scene):
             y += 18
             draw_text(surface, f"Last Event: {self.state.last_event_id}", theme.get_font(14), theme.COLOR_TEXT_MUTED, (self.hud_rect.left + 12, y))
 
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
             button.draw(surface, mouse_pos)
 

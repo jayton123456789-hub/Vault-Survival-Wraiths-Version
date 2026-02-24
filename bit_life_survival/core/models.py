@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -10,6 +11,9 @@ ItemSlot = Literal["pack", "armor", "vehicle", "utility", "faction", "consumable
 ItemRarity = Literal["common", "uncommon", "rare", "legendary"]
 MaterialName = Literal["scrap", "cloth", "plastic", "metal"]
 BodyPart = Literal["head", "torso", "left_arm", "right_arm", "left_leg", "right_leg"]
+RunLogCategory = Literal["TRAVEL", "EVENT", "CHOICE", "OUTCOME", "LOOT", "INJURY", "HEAL", "SYSTEM"]
+
+SAVE_VERSION = 2
 
 RUNNER_EQUIP_SLOTS = ("pack", "armor", "vehicle", "utility1", "utility2", "faction")
 METER_NAMES: tuple[MeterName, MeterName, MeterName] = ("stamina", "hydration", "morale")
@@ -157,6 +161,14 @@ class EquippedSlots(StrictModel):
         return [item_id for item_id in values.values() if item_id]
 
 
+class RunLogEntry(StrictModel):
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    step: int = Field(default=0, ge=0)
+    category: RunLogCategory
+    message: str = Field(min_length=1)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class GameState(StrictModel):
     seed: int | str
     step: int = Field(default=0, ge=0)
@@ -176,6 +188,8 @@ class GameState(StrictModel):
     event_cooldowns: dict[str, int] = Field(default_factory=dict)
     rng_state: int = Field(gt=0)
     rng_calls: int = Field(default=0, ge=0)
+    run_log: list[RunLogEntry] = Field(default_factory=list)
+    run_log_max: int = Field(default=300, ge=50, le=1000)
 
     @field_validator("inventory")
     @classmethod
@@ -212,12 +226,32 @@ class GameState(StrictModel):
         self.injury = max(0.0, min(100.0, total))
         return self
 
+    def append_run_log(
+        self,
+        category: RunLogCategory,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.run_log.append(
+            RunLogEntry(
+                step=self.step,
+                category=category,
+                message=message,
+                details=details or {},
+            )
+        )
+        overflow = len(self.run_log) - int(self.run_log_max)
+        if overflow > 0:
+            del self.run_log[:overflow]
+
 
 class Citizen(StrictModel):
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     quirk: str = Field(min_length=1)
     kit: dict[str, int] = Field(default_factory=dict)
+    loadout: EquippedSlots = Field(default_factory=EquippedSlots)
+    kit_seed: int | None = None
 
 
 def default_materials() -> dict[str, int]:
@@ -270,6 +304,7 @@ class VaultState(StrictModel):
 
 
 class SaveData(StrictModel):
+    save_version: int = Field(default=SAVE_VERSION, ge=1)
     vault: VaultState
 
 

@@ -4,34 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from bit_life_survival.core.settings import default_settings, merge_settings
 
-DEFAULT_SETTINGS: dict[str, Any] = {
-    "gameplay": {
-        "skip_intro": False,
-        "show_advanced_overlay": False,
-        "confirm_retreat": True,
-        "save_slots": 3,
-        "tutorial_completed": False,
-        "replay_tutorial": False,
-    },
-    "video": {
-        "fullscreen": False,
-        "resolution": [1280, 720],
-        "ui_scale": 1.0,
-    },
-    "audio": {
-        "master": 1.0,
-        "music": 0.8,
-        "sfx": 0.9,
-    },
-    "controls": {
-        "continue": "C",
-        "log": "L",
-        "retreat": "R",
-        "quit": "Q",
-        "help": "H",
-    },
-}
+DEFAULT_SETTINGS: dict[str, Any] = default_settings()
 
 
 def _deep_copy_defaults() -> dict[str, Any]:
@@ -39,14 +14,7 @@ def _deep_copy_defaults() -> dict[str, Any]:
 
 
 def _merge_defaults(data: dict[str, Any]) -> dict[str, Any]:
-    merged = _deep_copy_defaults()
-    for section, section_values in data.items():
-        if section not in merged or not isinstance(section_values, dict):
-            continue
-        for key, value in section_values.items():
-            if key in merged[section]:
-                merged[section][key] = value
-    return merged
+    return merge_settings(data)
 
 
 class SettingsStore:

@@ -12,6 +12,7 @@ from .core import Scene
 class LoadGameScene(Scene):
     def __init__(self) -> None:
         self.slot_buttons: list[Button] = []
+        self._slot_ids: tuple[int, ...] = (1, 2, 3)
         self.back_button: Button | None = None
         self._last_size: tuple[int, int] | None = None
         self.message: str = ""
@@ -21,9 +22,14 @@ class LoadGameScene(Scene):
             return
         self._last_size = app.screen.get_size()
         panel_rect = anchored_rect(app.screen.get_rect(), (820, 560))
-        rows = split_rows(pygame.Rect(panel_rect.left + 20, panel_rect.top + 80, panel_rect.width - 40, panel_rect.height - 140), [1, 1, 1], gap=12)
+        self._slot_ids = tuple(app.save_service.slot_ids)
+        rows = split_rows(
+            pygame.Rect(panel_rect.left + 20, panel_rect.top + 80, panel_rect.width - 40, panel_rect.height - 140),
+            [1 for _ in self._slot_ids],
+            gap=12,
+        )
         self.slot_buttons = []
-        for row, slot in zip(rows, (1, 2, 3)):
+        for row, slot in zip(rows, self._slot_ids):
             self.slot_buttons.append(Button(row, f"Slot {slot}", on_click=lambda s=slot: self._load_slot(app, s)))
         self.back_button = Button(
             pygame.Rect(panel_rect.left + 20, panel_rect.bottom - 48, 180, 34),
@@ -64,8 +70,8 @@ class LoadGameScene(Scene):
         Panel(panel_rect, title="Load Game").draw(surface)
 
         summaries = {summary.slot: summary for summary in app.save_service.list_slots()}
-        mouse_pos = pygame.mouse.get_pos()
-        for slot, button in zip((1, 2, 3), self.slot_buttons):
+        mouse_pos = app.virtual_mouse_pos()
+        for slot, button in zip(self._slot_ids, self.slot_buttons):
             summary = summaries[slot]
             button.text = f"Slot {slot} - {'Load' if summary.occupied else 'Empty'}"
             button.enabled = summary.occupied

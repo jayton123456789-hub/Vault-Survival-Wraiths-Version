@@ -5,13 +5,17 @@ Python roguelite prototype with deterministic run simulation, data-driven conten
 ## Windows Install
 Install path and user-data path are separated:
 - Repo install target: `C:\BitLifeSurvival\Vault_Bit_Survival\`
-- User data: `%LOCALAPPDATA%\BitLifeSurvival\`
-  - Saves: `%LOCALAPPDATA%\BitLifeSurvival\saves`
-  - Logs: `%LOCALAPPDATA%\BitLifeSurvival\logs`
-  - Config: `%LOCALAPPDATA%\BitLifeSurvival\config`
+- Runtime data (default): `C:\BitLifeSurvival\`
+  - Saves: `C:\BitLifeSurvival\saves`
+  - Logs: `C:\BitLifeSurvival\logs`
+  - Config: `C:\BitLifeSurvival\config`
+- Automatic fallback order if `C:\BitLifeSurvival` is unavailable:
+  1. `%LOCALAPPDATA%\BitLifeSurvival`
+  2. `%USERPROFILE%\BitLifeSurvival`
 
 Run installer/move helper:
 - `powershell -ExecutionPolicy Bypass -File scripts\windows_install.ps1`
+- `powershell -ExecutionPolicy Bypass -File tools\install_to_c.ps1`
 
 ## Quickstart
 1. Create venv:

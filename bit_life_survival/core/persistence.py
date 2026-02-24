@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import MATERIAL_ITEM_IDS, Citizen, SaveData, SettingsState, VaultState, default_materials
+from .models import MATERIAL_ITEM_IDS, EquippedSlots, SAVE_VERSION, Citizen, SaveData, SettingsState, VaultState, default_materials
 from .rng import DeterministicRNG
+from .save_system import migrate_save
 
 DEFAULT_QUEUE_TARGET = 12
 
@@ -66,7 +67,14 @@ def _make_citizen(rng: DeterministicRNG, sequence: int) -> Citizen:
         kit["battery_bank"] = 1
     if "routes" in quirk.lower() and rng.next_float() < 0.45:
         kit["lockpick_set"] = 1
-    return Citizen(id=cid, name=name, quirk=quirk, kit=kit)
+    return Citizen(
+        id=cid,
+        name=name,
+        quirk=quirk,
+        kit=kit,
+        loadout=EquippedSlots(),
+        kit_seed=rng.state,
+    )
 
 
 def _default_storage() -> dict[str, int]:
@@ -107,7 +115,7 @@ def create_default_vault_state(base_seed: int = 1337) -> VaultState:
 
 
 def create_default_save_data(base_seed: int = 1337) -> SaveData:
-    return SaveData(vault=create_default_vault_state(base_seed=base_seed))
+    return SaveData(save_version=SAVE_VERSION, vault=create_default_vault_state(base_seed=base_seed))
 
 
 def load_save_data(save_path: Path | str = "save.json", base_seed: int = 1337) -> SaveData:
@@ -115,18 +123,16 @@ def load_save_data(save_path: Path | str = "save.json", base_seed: int = 1337) -
     if not path.exists():
         return create_default_save_data(base_seed=base_seed)
     data = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(data, dict) and "vault" in data:
-        hydrated = SaveData.model_validate(data)
-        _migrate_materials(hydrated.vault)
-        return hydrated
-    # Backward compatibility with older save format containing only vault object.
-    hydrated = SaveData(vault=VaultState.model_validate(data))
+    payload = migrate_save(data)
+    hydrated = SaveData.model_validate(payload)
+    hydrated.save_version = SAVE_VERSION
     _migrate_materials(hydrated.vault)
     return hydrated
 
 
 def save_save_data(state: SaveData, save_path: Path | str = "save.json") -> None:
     path = Path(save_path)
+    state.save_version = SAVE_VERSION
     path.write_text(json.dumps(state.model_dump(mode="json"), indent=2), encoding="utf-8")
 
 

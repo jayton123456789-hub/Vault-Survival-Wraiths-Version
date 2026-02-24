@@ -63,8 +63,7 @@ class Panel:
     border: tuple[int, int, int] = theme.COLOR_BORDER
 
     def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, self.bg, self.rect, border_radius=theme.BORDER_RADIUS)
-        pygame.draw.rect(surface, self.border, self.rect, width=1, border_radius=theme.BORDER_RADIUS)
+        _draw_pixel_frame(surface, self.rect, self.bg, self.border)
         if self.title:
             draw_text(
                 surface,
@@ -86,8 +85,10 @@ class Button:
     hovered: bool = False
     bg: tuple[int, int, int] = theme.COLOR_PANEL_ALT
     bg_hover: tuple[int, int, int] = theme.COLOR_ACCENT_SOFT
-    bg_disabled: tuple[int, int, int] = (48, 50, 58)
+    bg_disabled: tuple[int, int, int] = theme.COLOR_BUTTON_DISABLED
     fg: tuple[int, int, int] = theme.COLOR_TEXT
+    tooltip_delay_ms: int = 250
+    _hover_start_ms: int | None = None
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not self.enabled:
@@ -104,18 +105,34 @@ class Button:
 
     def draw(self, surface: pygame.Surface, mouse_pos: tuple[int, int]) -> None:
         self.hovered = self.enabled and self.rect.collidepoint(mouse_pos)
+        now_ms = pygame.time.get_ticks()
+        if self.hovered:
+            if self._hover_start_ms is None:
+                self._hover_start_ms = now_ms
+        else:
+            self._hover_start_ms = None
+
         if not self.enabled:
-            bg = self.bg_disabled
+            top = self.bg_disabled
+            bottom = self.bg_disabled
             fg = theme.COLOR_TEXT_MUTED
         elif self.hovered:
-            bg = self.bg_hover
+            top = theme.COLOR_BUTTON_TOP_HOVER
+            bottom = self.bg_hover
             fg = self.fg
         else:
-            bg = self.bg
+            top = theme.COLOR_BUTTON_TOP
+            bottom = theme.COLOR_BUTTON_BOTTOM
             fg = self.fg
-        pygame.draw.rect(surface, bg, self.rect, border_radius=theme.BORDER_RADIUS)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self.rect, width=1, border_radius=theme.BORDER_RADIUS)
+        _draw_pixel_button(surface, self.rect, top, bottom, theme.COLOR_BORDER)
         draw_text(surface, self.text, theme.get_font(20, bold=True), fg, self.rect.center, "center")
+
+    def tooltip_visible(self) -> bool:
+        if not self.hovered or not self.tooltip:
+            return False
+        if self._hover_start_ms is None:
+            return False
+        return (pygame.time.get_ticks() - self._hover_start_ms) >= self.tooltip_delay_ms
 
 
 @dataclass(slots=True)
@@ -127,11 +144,15 @@ class ProgressBar:
     color: tuple[int, int, int] = theme.COLOR_ACCENT
 
     def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, theme.COLOR_PROGRESS_BG, self.rect, border_radius=theme.BORDER_RADIUS)
+        _draw_pixel_frame(surface, self.rect, theme.COLOR_PROGRESS_BG, theme.COLOR_BORDER)
         ratio = 0.0 if self.max_value <= 0 else max(0.0, min(1.0, self.value / self.max_value))
-        fill = pygame.Rect(self.rect.left, self.rect.top, int(self.rect.width * ratio), self.rect.height)
+        fill = pygame.Rect(
+            self.rect.left + theme.BORDER_WIDTH,
+            self.rect.top + theme.BORDER_WIDTH,
+            max(0, int((self.rect.width - theme.BORDER_WIDTH * 2) * ratio)),
+            max(0, self.rect.height - theme.BORDER_WIDTH * 2),
+        )
         pygame.draw.rect(surface, self.color, fill, border_radius=theme.BORDER_RADIUS)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self.rect, width=1, border_radius=theme.BORDER_RADIUS)
         if self.label:
             draw_text(surface, self.label, theme.get_font(16, bold=True), theme.COLOR_TEXT, self.rect.center, "center")
 
@@ -187,8 +208,7 @@ class ScrollList:
         return False
 
     def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self.rect, border_radius=theme.BORDER_RADIUS)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self.rect, width=1, border_radius=theme.BORDER_RADIUS)
+        _draw_pixel_frame(surface, self.rect, theme.COLOR_PANEL_ALT, theme.COLOR_BORDER)
 
         start = self.offset
         end = min(len(self.items), start + self.visible_rows())
@@ -204,12 +224,51 @@ class ScrollList:
 
 def hovered_tooltip(buttons: list[Button]) -> str | None:
     for button in buttons:
-        if button.hovered and button.tooltip:
+        if button.tooltip_visible():
             return button.tooltip
     return None
 
 
 def draw_tooltip_bar(surface: pygame.Surface, rect: pygame.Rect, text: str) -> None:
-    pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, rect, border_radius=6)
-    pygame.draw.rect(surface, theme.COLOR_BORDER, rect, width=1, border_radius=6)
+    _draw_pixel_frame(surface, rect, theme.COLOR_PANEL_ALT, theme.COLOR_BORDER)
     draw_text(surface, text, theme.get_font(15), theme.COLOR_TEXT_MUTED, (rect.left + 10, rect.centery), "midleft")
+
+
+def _draw_pixel_frame(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    fill_color: tuple[int, int, int],
+    border_color: tuple[int, int, int],
+) -> None:
+    pygame.draw.rect(surface, border_color, rect, border_radius=theme.BORDER_RADIUS)
+    inner = rect.inflate(-theme.BORDER_WIDTH * 2, -theme.BORDER_WIDTH * 2)
+    if inner.width <= 0 or inner.height <= 0:
+        return
+    pygame.draw.rect(surface, fill_color, inner, border_radius=theme.BORDER_RADIUS)
+    if inner.width > 4 and inner.height > 4:
+        highlight_rect = inner.inflate(-2, -2)
+        pygame.draw.rect(
+            surface,
+            theme.COLOR_BORDER_INNER,
+            highlight_rect,
+            width=theme.BORDER_INNER_WIDTH,
+            border_radius=theme.BORDER_RADIUS,
+        )
+
+
+def _draw_pixel_button(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    top_color: tuple[int, int, int],
+    bottom_color: tuple[int, int, int],
+    border_color: tuple[int, int, int],
+) -> None:
+    _draw_pixel_frame(surface, rect, bottom_color, border_color)
+    top_rect = pygame.Rect(
+        rect.left + theme.BORDER_WIDTH + 1,
+        rect.top + theme.BORDER_WIDTH + 1,
+        rect.width - (theme.BORDER_WIDTH * 2) - 2,
+        max(0, rect.height // 2 - 1),
+    )
+    if top_rect.width > 0 and top_rect.height > 0:
+        pygame.draw.rect(surface, top_color, top_rect, border_radius=theme.BORDER_RADIUS)

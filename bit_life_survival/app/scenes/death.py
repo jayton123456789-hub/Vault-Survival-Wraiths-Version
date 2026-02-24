@@ -94,6 +94,6 @@ class DeathScene(Scene):
             y += 8
             draw_text(surface, f"Milestones: {', '.join(self.recovery_report.milestone_awards)}", theme.get_font(16), theme.COLOR_WARNING, (self._panel_rect.left + 20, y))
 
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = app.virtual_mouse_pos()
         for button in self.buttons:
             button.draw(surface, mouse_pos)

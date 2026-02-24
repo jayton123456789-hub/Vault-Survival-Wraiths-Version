@@ -49,10 +49,16 @@ Autopick policies:
 - `python -m pytest -q`
 
 ## Data Paths (Windows)
-- User data root: `%LOCALAPPDATA%\BitLifeSurvival\`
-- Saves: `%LOCALAPPDATA%\BitLifeSurvival\saves`
-- Config: `%LOCALAPPDATA%\BitLifeSurvival\config\settings.json`
-- Logs: `%LOCALAPPDATA%\BitLifeSurvival\logs\latest.log`
+- Default runtime root: `C:\BitLifeSurvival\`
+- Saves: `C:\BitLifeSurvival\saves`
+- Config: `C:\BitLifeSurvival\config\settings.json`
+- Logs: `C:\BitLifeSurvival\logs\latest.log`
+- Fallback chain (automatic): `%LOCALAPPDATA%\BitLifeSurvival` then `%USERPROFILE%\BitLifeSurvival`
+
+## Renderer
+- The pygame UI now uses a virtual canvas and blits to the window each frame.
+- Virtual resolution constant: `bit_life_survival/app/ui/theme.py::VIRTUAL_RESOLUTION`
+- Mouse input is remapped from window space into virtual-canvas space.
 
 ## Controls
 - Base: `U` claw draft, `Enter` draft selected, `L` loadout, `D` deploy, `S` settings, `H` help.
