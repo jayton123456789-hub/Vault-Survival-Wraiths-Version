@@ -32,6 +32,9 @@ class BaseScene(Scene):
         self.citizen_scroll: ScrollList | None = None
         self._citizen_rows: list[str] = []
         self.selected_citizen_index: int | None = None
+        self.crafting_scroll: ScrollList | None = None
+        self._recipe_ids: list[str] = []
+        self.selected_recipe_id: str | None = None
 
     def _draw_top_bar(self, app, surface: pygame.Surface, rect: pygame.Rect) -> None:
         vault = app.save_data.vault
@@ -160,6 +163,25 @@ class BaseScene(Scene):
         self._refresh_storage_rows(app)
         self.message = f"Crafted {recipe.output_qty}x {recipe.name}."
 
+    def _refresh_recipe_rows(self, app) -> None:
+        self._recipe_ids = [recipe.id for recipe in app.content.recipes]
+        if self.crafting_scroll:
+            self.crafting_scroll.set_items([app.content.recipe_by_id[rid].name for rid in self._recipe_ids])
+        if self.selected_recipe_id not in app.content.recipe_by_id:
+            self.selected_recipe_id = self._recipe_ids[0] if self._recipe_ids else None
+        if self.crafting_scroll and self.selected_recipe_id in self._recipe_ids:
+            self.crafting_scroll.selected_index = self._recipe_ids.index(self.selected_recipe_id)
+
+    def _on_recipe_select(self, index: int) -> None:
+        if 0 <= index < len(self._recipe_ids):
+            self.selected_recipe_id = self._recipe_ids[index]
+
+    def _craft_selected(self, app) -> None:
+        if not self.selected_recipe_id:
+            self.message = "Select a recipe first."
+            return
+        self._craft_recipe(app, self.selected_recipe_id)
+
     def _build_layout(self, app) -> None:
         if self._last_size == app.screen.get_size() and self.buttons:
             return
@@ -229,20 +251,27 @@ class BaseScene(Scene):
             self.storage_scroll = None
 
         if self.selected_module == "crafting":
-            start_y = self._center_rect.top + 110
-            for recipe in app.content.recipes[:10]:
-                row = pygame.Rect(self._center_rect.left + 12, start_y, self._center_rect.width - 24, 34)
-                craftable, _ = can_craft(app.save_data.vault, recipe)
-                self.buttons.append(
-                    Button(
-                        row,
-                        f"Craft: {recipe.name}",
-                        enabled=craftable,
-                        on_click=lambda rid=recipe.id: self._craft_recipe(app, rid),
-                        tooltip=recipe.description or f"Craft {recipe.name}.",
-                    )
+            self.crafting_scroll = ScrollList(
+                pygame.Rect(self._center_rect.left + 12, self._center_rect.top + 96, self._center_rect.width - 24, self._center_rect.height - 160),
+                row_height=30,
+                on_select=self._on_recipe_select,
+            )
+            self._refresh_recipe_rows(app)
+            craft_button_rect = pygame.Rect(self._center_rect.left + 12, self._center_rect.bottom - 54, self._center_rect.width - 24, 36)
+            recipe = app.content.recipe_by_id.get(self.selected_recipe_id) if self.selected_recipe_id else None
+            craftable = bool(recipe and can_craft(app.save_data.vault, recipe)[0])
+            self.buttons.append(
+                Button(
+                    craft_button_rect,
+                    "Craft Selected",
+                    hotkey=pygame.K_RETURN,
+                    enabled=craftable,
+                    on_click=lambda: self._craft_selected(app),
+                    tooltip="Craft the selected recipe if requirements are met.",
                 )
-                start_y += 38
+            )
+        else:
+            self.crafting_scroll = None
 
         bottom_cols = split_columns(
             pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top + 8, self._bottom_rect.width - 16, self._bottom_rect.height - 16),
@@ -265,6 +294,8 @@ class BaseScene(Scene):
         if self.storage_scroll and self.storage_scroll.handle_event(event):
             return
         if self.citizen_scroll and self.citizen_scroll.handle_event(event):
+            return
+        if self.crafting_scroll and self.crafting_scroll.handle_event(event):
             return
         for button in self.buttons:
             if button.handle_event(event):
@@ -297,15 +328,10 @@ class BaseScene(Scene):
                 (materials_rect.left, materials_rect.bottom + 6),
             )
         elif self.selected_module == "crafting":
-            draw_text(surface, "Crafting recipes (greyed-out = missing materials).", theme.get_font(16), theme.COLOR_TEXT_MUTED, (materials_rect.left, materials_rect.top))
-            draw_text(
-                surface,
-                "Materials",
-                theme.get_font(15, bold=True),
-                theme.COLOR_TEXT,
-                (materials_rect.left, materials_rect.top + 24),
-            )
-            y = materials_rect.top + 46
+            draw_text(surface, "Crafting recipes (select one to view requirements).", theme.get_font(16), theme.COLOR_TEXT_MUTED, (materials_rect.left, materials_rect.top))
+            if self.crafting_scroll:
+                self.crafting_scroll.draw(surface)
+            y = materials_rect.top + 24
             for mid in MATERIAL_IDS:
                 draw_text(surface, f"{mid.title()}: {app.save_data.vault.materials.get(mid, 0)}", theme.get_font(15), theme.COLOR_TEXT_MUTED, (materials_rect.left, y))
                 y += 20
@@ -322,6 +348,43 @@ class BaseScene(Scene):
                 yy += 24
 
     def _draw_right_panel(self, app, surface: pygame.Surface) -> None:
+        if self.selected_module == "crafting":
+            y = self._right_rect.top + 50
+            draw_text(surface, "Crafting Detail", theme.get_font(20, bold=True), theme.COLOR_TEXT, (self._right_rect.left + 12, y))
+            y += 30
+            if not self.selected_recipe_id:
+                draw_text(surface, "Select a recipe to inspect requirements.", theme.get_font(15), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 12, y))
+                return
+            recipe = app.content.recipe_by_id[self.selected_recipe_id]
+            craftable, requirements = can_craft(app.save_data.vault, recipe)
+            draw_text(surface, recipe.name, theme.get_font(18, bold=True), theme.COLOR_ACCENT, (self._right_rect.left + 12, y))
+            y += 24
+            if recipe.description:
+                for line in wrap_text(recipe.description, theme.get_font(14), self._right_rect.width - 24):
+                    draw_text(surface, line, theme.get_font(14), theme.COLOR_TEXT_MUTED, (self._right_rect.left + 12, y))
+                    y += 18
+            y += 6
+            draw_text(surface, "Requirements", theme.get_font(16, bold=True), theme.COLOR_TEXT, (self._right_rect.left + 12, y))
+            y += 22
+            for material_id, (have, need) in requirements.items():
+                okay = have >= need
+                color = theme.COLOR_SUCCESS if okay else theme.COLOR_WARNING
+                draw_text(surface, f"{material_id.title()}: {have} / {need}", theme.get_font(15), color, (self._right_rect.left + 12, y))
+                y += 20
+            y += 10
+            out_item = app.content.item_by_id.get(recipe.output_item)
+            out_name = out_item.name if out_item else recipe.output_item
+            draw_text(surface, f"Output: {out_name} x{recipe.output_qty}", theme.get_font(16), theme.COLOR_TEXT, (self._right_rect.left + 12, y))
+            y += 22
+            draw_text(
+                surface,
+                "Status: Craftable" if craftable else "Status: Missing materials",
+                theme.get_font(16, bold=True),
+                theme.COLOR_SUCCESS if craftable else theme.COLOR_WARNING,
+                (self._right_rect.left + 12, y),
+            )
+            return
+
         if self.selected_module == "storage" and self.selected_storage_item_id:
             item = app.content.item_by_id.get(self.selected_storage_item_id)
             if item:
@@ -397,6 +460,9 @@ class BaseScene(Scene):
         self._draw_top_bar(app, surface, self._top_rect)
         mouse_pos = pygame.mouse.get_pos()
         for button in self.buttons:
+            if button.text == "Craft Selected":
+                recipe = app.content.recipe_by_id.get(self.selected_recipe_id) if self.selected_recipe_id else None
+                button.enabled = bool(recipe and can_craft(app.save_data.vault, recipe)[0])
             button.draw(surface, mouse_pos)
 
         queue = app.save_data.vault.citizen_queue[:5]
