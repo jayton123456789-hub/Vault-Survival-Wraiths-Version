@@ -35,6 +35,7 @@ class BaseScene(Scene):
         self.crafting_scroll: ScrollList | None = None
         self._recipe_ids: list[str] = []
         self.selected_recipe_id: str | None = None
+        self.help_overlay = False
 
     def _draw_top_bar(self, app, surface: pygame.Surface, rect: pygame.Rect) -> None:
         vault = app.save_data.vault
@@ -288,8 +289,12 @@ class BaseScene(Scene):
             app.quit()
             return
         self._build_layout(app)
+        if self.help_overlay:
+            if event.type in {pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN}:
+                self.help_overlay = False
+            return
         if event.type == pygame.KEYDOWN and event.key == pygame.K_h:
-            self.message = "Vault help: U claw, L loadout, D deploy, S settings, H help."
+            self.help_overlay = True
             return
         if self.storage_scroll and self.storage_scroll.handle_event(event):
             return
@@ -504,3 +509,27 @@ class BaseScene(Scene):
 
         if self.message:
             draw_text(surface, self.message, theme.get_font(17), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 8), "midbottom")
+        if self.help_overlay:
+            self._draw_help_overlay(surface)
+
+    def _draw_help_overlay(self, surface: pygame.Surface) -> None:
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 175))
+        surface.blit(overlay, (0, 0))
+        rect = pygame.Rect(surface.get_width() // 2 - 360, surface.get_height() // 2 - 220, 720, 440)
+        Panel(rect, title="Base Help").draw(surface)
+        lines = [
+            "The Claw drafts one citizen into the current run slot.",
+            "Deploy moves to briefing, then starts the run.",
+            "Loadout tags unlock stronger event options during runs.",
+            "Materials pouch stores scrap/cloth/plastic/metal outside gear storage limits.",
+            "Crafting consumes materials and produces gear for storage.",
+            "Retreat during a run ends early and applies drone recovery penalties.",
+            "Press any key to close this help screen.",
+        ]
+        y = rect.top + 54
+        for line in lines:
+            for wrapped in wrap_text(line, theme.get_font(17), rect.width - 28):
+                draw_text(surface, wrapped, theme.get_font(17), theme.COLOR_TEXT, (rect.left + 14, y))
+                y += 22
+            y += 3

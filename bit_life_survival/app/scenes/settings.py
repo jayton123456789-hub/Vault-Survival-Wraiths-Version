@@ -49,6 +49,15 @@ class SettingsScene(Scene):
         )
         app.save_settings()
 
+    def _cycle_save_slots(self, app) -> None:
+        current = int(app.settings["gameplay"].get("save_slots", 3))
+        current += 1
+        if current > 6:
+            current = 3
+        app.settings["gameplay"]["save_slots"] = current
+        app.save_settings()
+        app.save_service = app.save_service.__class__(app.user_paths.saves, slot_count=current)
+
     def _build_layout(self, app) -> None:
         if self._last_size == app.screen.get_size() and self.buttons:
             return
@@ -70,7 +79,7 @@ class SettingsScene(Scene):
         content = pygame.Rect(panel_rect.left + 20, panel_rect.top + 105, panel_rect.width - 40, panel_rect.height - 170)
 
         if self.tab == "gameplay":
-            rows = [pygame.Rect(content.left, content.top + i * 56, content.width, 44) for i in range(3)]
+            rows = [pygame.Rect(content.left, content.top + i * 56, content.width, 44) for i in range(5)]
             self.buttons.append(
                 Button(rows[0], f"Skip Intro: {app.settings['gameplay']['skip_intro']}", on_click=lambda: self._toggle(app, "gameplay", "skip_intro"))
             )
@@ -86,6 +95,20 @@ class SettingsScene(Scene):
                     rows[2],
                     f"Confirm Retreat: {app.settings['gameplay']['confirm_retreat']}",
                     on_click=lambda: self._toggle(app, "gameplay", "confirm_retreat"),
+                )
+            )
+            self.buttons.append(
+                Button(
+                    rows[3],
+                    f"Save Slots: {app.settings['gameplay'].get('save_slots', 3)}",
+                    on_click=lambda: self._cycle_save_slots(app),
+                )
+            )
+            self.buttons.append(
+                Button(
+                    rows[4],
+                    "Replay Tutorial (next run)",
+                    on_click=lambda: self._request_replay_tutorial(app),
                 )
             )
         elif self.tab == "video":
@@ -120,6 +143,12 @@ class SettingsScene(Scene):
         app.save_settings()
         app.apply_video_settings()
         self.message = "Settings applied."
+
+    def _request_replay_tutorial(self, app) -> None:
+        app.settings["gameplay"]["tutorial_completed"] = False
+        app.settings["gameplay"]["replay_tutorial"] = True
+        app.save_settings()
+        self.message = "Tutorial will replay when you enter the next run."
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:

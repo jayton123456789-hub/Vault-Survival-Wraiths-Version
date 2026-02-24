@@ -25,3 +25,17 @@ def test_save_slot_create_and_load_roundtrip(tmp_path: Path) -> None:
     assert slot1.tav == 42
     assert slot1.last_distance == 17.5
     assert slot1.last_time == 9
+
+
+def test_save_slot_rename_and_delete(tmp_path: Path) -> None:
+    service = SaveService(tmp_path / "saves", slot_count=3)
+    service.create_new_game(slot=2, base_seed=999)
+    service.rename_slot(2, "Primary Vault")
+
+    slot2 = next(summary for summary in service.list_slots() if summary.slot == 2)
+    assert slot2.slot_name == "Primary Vault"
+    assert slot2.occupied is True
+
+    service.delete_slot(2)
+    slot2_after = next(summary for summary in service.list_slots() if summary.slot == 2)
+    assert slot2_after.occupied is False

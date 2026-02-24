@@ -29,6 +29,7 @@ class LoadoutScene(Scene):
         self._last_size: tuple[int, int] | None = None
         self._inventory_items: list[tuple[str, int]] = []
         self._slot_buttons: dict[str, Button] = {}
+        self.help_overlay = False
 
     def _allowed_slot(self, run_slot: str) -> str:
         return "utility" if run_slot in {"utility1", "utility2"} else run_slot
@@ -221,13 +222,17 @@ class LoadoutScene(Scene):
         self.message = "Cleared all equipped items."
 
     def _show_help(self) -> None:
-        self.message = "Pick an item and click a slot. Use Equip Best/All to auto-plan a build."
+        self.help_overlay = True
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
             app.quit()
             return
         self._build_layout(app)
+        if self.help_overlay:
+            if event.type in {pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN}:
+                self.help_overlay = False
+            return
         if self.scroll_list and self.scroll_list.handle_event(event):
             return
         for button in self.buttons:
@@ -291,3 +296,26 @@ class LoadoutScene(Scene):
             draw_tooltip_bar(surface, tip_rect, tip)
         if self.message:
             draw_text(surface, self.message, theme.get_font(17), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 8), "midbottom")
+        if self.help_overlay:
+            self._draw_help_overlay(surface)
+
+    def _draw_help_overlay(self, surface: pygame.Surface) -> None:
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 175))
+        surface.blit(overlay, (0, 0))
+        rect = pygame.Rect(surface.get_width() // 2 - 360, surface.get_height() // 2 - 210, 720, 420)
+        Panel(rect, title="Loadout Help").draw(surface)
+        lines = [
+            "Choose gear from storage and assign it to slots.",
+            "Equip Best uses deterministic scoring for the active slot.",
+            "Equip All fills every slot with the best available plan.",
+            "Tags from equipped items unlock event options in runs.",
+            "Carry capacity and drain multipliers are shown on the right panel.",
+            "Press any key to close.",
+        ]
+        y = rect.top + 52
+        for line in lines:
+            for wrapped in wrap_text(line, theme.get_font(17), rect.width - 28):
+                draw_text(surface, wrapped, theme.get_font(17), theme.COLOR_TEXT, (rect.left + 14, y))
+                y += 22
+            y += 3

@@ -1,11 +1,11 @@
-# Phase 1 Vertical Slice
+# Phase 2.1 Window Slice
 
 ## Scope
-Phase 1 delivers a playable Python desktop slice with this loop:
+Playable pygame desktop loop:
 
-`Base -> Claw Draft -> Loadout -> Run -> Death -> Drone Recovery -> Vault Progress -> Repeat`
+`Main Menu -> Base -> Loadout -> Briefing -> Run -> Death/Retreat -> Drone Recovery -> Base`
 
-This phase is Python-only and data-driven (`bit_life_survival/content/*.json`).
+Python-only, data-driven content from `bit_life_survival/content/*.json`.
 
 ## Stack
 - Python 3.11+
@@ -13,7 +13,7 @@ This phase is Python-only and data-driven (`bit_life_survival/content/*.json`).
 - `rich` for terminal UI/HUD
 - `typer` for CLI tooling
 - `pytest` for tests
-- `pygame` for BBWG intro playback
+- `pygame` for intro + full window UI
 
 ## Setup
 1. Create venv:
@@ -28,6 +28,9 @@ This phase is Python-only and data-driven (`bit_life_survival/content/*.json`).
 
 Or one-click launcher:
 - `tools\run_game.cmd`
+
+Smoke command:
+- `python -m bit_life_survival.app.main`
 
 ## Install Desktop Shortcut
 - `powershell -ExecutionPolicy Bypass -File tools\install_shortcut.ps1`
@@ -45,20 +48,26 @@ Autopick policies:
 ## Run Tests
 - `python -m pytest -q`
 
-## Notes
-- Save file is `save.json` at repo root.
-- Intro settings can be toggled in Base -> Settings, in `settings.json`, or via `BLS_SKIP_INTRO=1`.
-- Runtime logs are written to `logs/latest.log` and also printed to the terminal.
+## Data Paths (Windows)
+- User data root: `%LOCALAPPDATA%\BitLifeSurvival\`
+- Saves: `%LOCALAPPDATA%\BitLifeSurvival\saves`
+- Config: `%LOCALAPPDATA%\BitLifeSurvival\config\settings.json`
+- Logs: `%LOCALAPPDATA%\BitLifeSurvival\logs\latest.log`
 
 ## Controls
-- Base: `1-6` actions, `H` help, `Q` quit.
-- Loadout: `1-6` equip slots, `C` clear slot, `H` help, `B` back.
-- Run: `C` continue until next event, `L` full log, `R` retreat to base, `Q` quit desktop, `H` help.
-- Event prompt: option number, `R` retreat, `Q` quit, `H` help, `Enter` skip event.
+- Base: `U` claw draft, `Enter` draft selected, `L` loadout, `D` deploy, `S` settings, `H` help.
+- Loadout: click to equip, `B` equip best, `A` equip all, `D` deploy, `H` help, `Esc` back.
+- Run: `C` continue, `L` log toggle, `R` retreat, `E` use aid, `Q` quit, `H` help.
+- Event modal: `1-4` choose option, `R` retreat, `Q` quit, `H` help.
 
 ## Retreat Behavior
 - Retreat ends the run immediately and marks a recovery penalty (`retreated_early`).
 - Drone recovery still runs on current inventory + equipped gear before returning to base.
+
+## Tutorial and Help
+- First run shows guided tutorial overlay on Run screen.
+- Settings has `Replay Tutorial (next run)`.
+- Structured help overlays are available on Base, Loadout, and Run.
 
 ## Intro Red Overlay Tuning
 In `bit_life_survival/app/intro.py`:

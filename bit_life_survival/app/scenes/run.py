@@ -7,6 +7,7 @@ import pygame
 
 from bit_life_survival.app.services.narrative import citizen_quip, event_flavor_line
 from bit_life_survival.app.ui import theme
+from bit_life_survival.app.ui.overlays.tutorial import TutorialOverlay, TutorialStep
 from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, Panel, ProgressBar, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 from bit_life_survival.core.drone import run_drone_recovery
@@ -53,6 +54,7 @@ class RunScene(Scene):
         self.confirm_retreat_overlay = False
         self.finalized = False
         self._finish_kind: RunFinish = "death"
+        self.tutorial_overlay: TutorialOverlay | None = None
 
         self.buttons: list[Button] = []
         self._last_size: tuple[int, int] | None = None
@@ -81,8 +83,40 @@ class RunScene(Scene):
             self.help_overlay = True
             app.save_data.vault.settings.seen_run_help = True
             app.save_current_slot()
+        if not bool(app.settings["gameplay"].get("tutorial_completed", False)) or bool(app.settings["gameplay"].get("replay_tutorial", False)):
+            app.settings["gameplay"]["tutorial_completed"] = False
+            app.settings["gameplay"]["replay_tutorial"] = False
+            self.tutorial_overlay = None
         if self.auto_step_once:
             self._continue_step(app)
+
+    def _build_tutorial(self, app) -> None:
+        if self.tutorial_overlay is not None:
+            return
+        self.tutorial_overlay = TutorialOverlay(
+            [
+                TutorialStep(
+                    title="Continue Until Next Event",
+                    body="Use Continue to travel one step and then stop at the next event decision.",
+                    target_rect_getter=lambda: self.bottom_rect,
+                ),
+                TutorialStep(
+                    title="Meters and Injury",
+                    body="Stamina and hydration keep you alive. Injury now tracks body parts and builds toward collapse.",
+                    target_rect_getter=lambda: self.hud_rect,
+                ),
+                TutorialStep(
+                    title="Timeline Feed",
+                    body="The timeline explains what happened in plain language so you can understand consequences quickly.",
+                    target_rect_getter=lambda: self.timeline_rect,
+                ),
+                TutorialStep(
+                    title="Gear Tags Unlock Options",
+                    body="Tags from loadout items unlock better event choices. Death is expected; drone recovery still advances the vault.",
+                    target_rect_getter=lambda: self.top_rect,
+                ),
+            ]
+        )
 
     def _carry_stats(self) -> tuple[int, int]:
         if not self.state:
@@ -288,6 +322,13 @@ class RunScene(Scene):
                 self.help_overlay = False
             return
 
+        if self.tutorial_overlay and self.tutorial_overlay.visible:
+            result = self.tutorial_overlay.handle_event(event)
+            if result in {"done", "skip"}:
+                app.settings["gameplay"]["tutorial_completed"] = True
+                app.save_settings()
+            return
+
         if self.confirm_retreat_overlay:
             if event.type == pygame.KEYDOWN:
                 if event.key in {pygame.K_y, pygame.K_RETURN}:
@@ -347,6 +388,8 @@ class RunScene(Scene):
 
     def render(self, app, surface: pygame.Surface) -> None:
         self._build_layout(app)
+        if not bool(app.settings["gameplay"].get("tutorial_completed", False)):
+            self._build_tutorial(app)
         app.backgrounds.draw(surface, self.state.biome_id if self.state else self.biome_id)
 
         if not self.state:
@@ -444,6 +487,8 @@ class RunScene(Scene):
             self._draw_result_modal(surface)
         if self.help_overlay:
             self._draw_help_overlay(surface)
+        if self.tutorial_overlay and self.tutorial_overlay.visible:
+            self.tutorial_overlay.draw(surface)
         if self.confirm_retreat_overlay:
             self._draw_confirm_retreat(surface)
 
