@@ -6,6 +6,7 @@ from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import anchored_rect, split_columns
 from bit_life_survival.app.ui.widgets import Button, Panel, draw_text, wrap_text
 from bit_life_survival.core.models import GameState
+from bit_life_survival.core.persistence import get_active_deploy_citizen
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
@@ -62,7 +63,7 @@ class BriefingScene(Scene):
         surface.fill(theme.COLOR_BG)
         Panel(self._panel_rect, title="Pre-Deploy Briefing").draw(surface)
 
-        citizen = app.save_data.vault.current_citizen
+        citizen = get_active_deploy_citizen(app.save_data.vault)
         state = GameState(seed=self.run_seed, biome_id=self.biome_id, rng_state=1, rng_calls=0, equipped=app.current_loadout.model_copy(deep=True))
         summary = compute_loadout_summary(state, app.content)
         tags = ", ".join(summary["tags"]) if summary["tags"] else "None"

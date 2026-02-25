@@ -13,7 +13,7 @@ MaterialName = Literal["scrap", "cloth", "plastic", "metal"]
 BodyPart = Literal["head", "torso", "left_arm", "right_arm", "left_leg", "right_leg"]
 RunLogCategory = Literal["TRAVEL", "EVENT", "CHOICE", "OUTCOME", "LOOT", "INJURY", "HEAL", "SYSTEM"]
 
-SAVE_VERSION = 2
+SAVE_VERSION = 3
 
 RUNNER_EQUIP_SLOTS = ("pack", "armor", "vehicle", "utility1", "utility2", "faction")
 METER_NAMES: tuple[MeterName, MeterName, MeterName] = ("stamina", "hydration", "morale")
@@ -274,7 +274,12 @@ class VaultState(StrictModel):
     tav: int = 0
     vault_level: int = Field(default=1, alias="vaultLevel")
     citizen_queue: list[Citizen] = Field(default_factory=list)
+    deploy_roster: list[Citizen] = Field(default_factory=list)
+    citizen_reserve: list[Citizen] = Field(default_factory=list)
     current_citizen: Citizen | None = None
+    active_deploy_citizen_id: str | None = None
+    citizen_queue_capacity: int = Field(default=4, ge=1, le=24)
+    deploy_roster_capacity: int = Field(default=1, ge=1, le=24)
     milestones: set[str] = Field(default_factory=set)
     run_counter: int = 0
     last_run_seed: int | str | None = None

@@ -283,14 +283,17 @@ def _draw_pixel_button(
     border_color: tuple[int, int, int],
 ) -> None:
     _draw_pixel_frame(surface, rect, bottom_color, border_color)
+    inner = rect.inflate(-theme.BORDER_WIDTH * 2, -theme.BORDER_WIDTH * 2)
     top_rect = pygame.Rect(
         rect.left + theme.BORDER_WIDTH + 1,
         rect.top + theme.BORDER_WIDTH + 1,
         rect.width - (theme.BORDER_WIDTH * 2) - 2,
-        max(0, rect.height // 2 - 2),
+        max(0, int(rect.height * 0.38)),
     )
     if top_rect.width > 0 and top_rect.height > 0:
         pygame.draw.rect(surface, top_color, top_rect, border_radius=theme.BORDER_RADIUS)
-    # Keep buttons clean: soft bevel only, no hard center strike line.
     if rect.height > 8:
         pygame.draw.line(surface, theme.COLOR_BORDER_HIGHLIGHT, (rect.left + 3, rect.top + 3), (rect.right - 4, rect.top + 3), 1)
+    if inner.height > 8:
+        bevel_y = inner.top + int(inner.height * 0.42)
+        pygame.draw.line(surface, theme.COLOR_BORDER_SHADE, (inner.left + 2, bevel_y), (inner.right - 2, bevel_y), 1)

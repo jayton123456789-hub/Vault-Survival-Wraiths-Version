@@ -7,7 +7,7 @@ from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 from bit_life_survival.core.models import GameState
-from bit_life_survival.core.persistence import store_item, take_item
+from bit_life_survival.core.persistence import get_active_deploy_citizen, store_item, take_item
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
@@ -32,12 +32,12 @@ class LoadoutScene(Scene):
         self.help_overlay = False
 
     def on_enter(self, app) -> None:
-        citizen = app.save_data.vault.current_citizen if app.save_data else None
+        citizen = get_active_deploy_citizen(app.save_data.vault) if app.save_data else None
         if citizen is not None:
             app.current_loadout = citizen.loadout.model_copy(deep=True)
 
     def _sync_citizen_loadout(self, app) -> None:
-        citizen = app.save_data.vault.current_citizen if app.save_data else None
+        citizen = get_active_deploy_citizen(app.save_data.vault) if app.save_data else None
         if citizen is not None:
             citizen.loadout = app.current_loadout.model_copy(deep=True)
 
@@ -165,12 +165,14 @@ class LoadoutScene(Scene):
         self.message = " ".join(lines[:2]) if lines else "No available gear to auto-equip."
 
     def _deploy(self, app) -> None:
-        if app.save_data.vault.current_citizen is None:
+        citizen = get_active_deploy_citizen(app.save_data.vault)
+        if citizen is None:
             self.message = "Draft a citizen before deploying."
             return
         seed = app.compute_run_seed()
         app.save_data.vault.last_run_seed = seed
         app.save_data.vault.run_counter += 1
+        app.save_data.vault.current_citizen = citizen
         self._sync_citizen_loadout(app)
         app.save_current_slot()
         from .briefing import BriefingScene

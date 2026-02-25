@@ -43,6 +43,24 @@ def _default_loadout_payload() -> dict[str, Any]:
     return {slot: None for slot in RUNNER_EQUIP_SLOTS}
 
 
+def _queue_capacity_formula(vault: dict[str, Any]) -> int:
+    vault_level = int(vault.get("vaultLevel", 1) or 1)
+    tav = int(vault.get("tav", 0) or 0)
+    upgrades = _coerce_dict(vault.get("upgrades"))
+    drone_level = int(upgrades.get("drone_bay_level", 0) or 0)
+    value = 4 + max(0, vault_level - 1) + min(4, tav // 50) + min(2, drone_level // 2)
+    return max(4, min(12, value))
+
+
+def _roster_capacity_formula(vault: dict[str, Any]) -> int:
+    vault_level = int(vault.get("vaultLevel", 1) or 1)
+    tav = int(vault.get("tav", 0) or 0)
+    upgrades = _coerce_dict(vault.get("upgrades"))
+    drone_level = int(upgrades.get("drone_bay_level", 0) or 0)
+    value = 1 + max(0, vault_level - 1) + min(3, tav // 60) + min(2, drone_level)
+    return max(1, min(8, value))
+
+
 def _migrate_legacy_injuries(payload: dict[str, Any]) -> None:
     run_state = _coerce_dict(payload.get("run_state"))
     if not run_state:
@@ -87,9 +105,70 @@ def _migrate_legacy_citizens(vault: dict[str, Any]) -> None:
     else:
         vault["citizen_queue"] = []
 
+    deploy_roster = vault.get("deploy_roster")
+    if isinstance(deploy_roster, list):
+        vault["deploy_roster"] = [hydrate_citizen(entry) for entry in deploy_roster]
+    else:
+        vault["deploy_roster"] = []
+
+    reserve = vault.get("citizen_reserve")
+    if isinstance(reserve, list):
+        vault["citizen_reserve"] = [hydrate_citizen(entry) for entry in reserve]
+    else:
+        vault["citizen_reserve"] = []
+
     current = vault.get("current_citizen")
     if current is not None:
         vault["current_citizen"] = hydrate_citizen(current)
+
+
+def _migrate_v2_to_v3(payload: dict[str, Any]) -> dict[str, Any]:
+    vault = _coerce_dict(payload.get("vault"))
+    _migrate_legacy_materials(vault)
+    _migrate_legacy_citizens(vault)
+
+    queue = list(vault.get("citizen_queue", []))
+    roster = list(vault.get("deploy_roster", []))
+    reserve = list(vault.get("citizen_reserve", []))
+
+    current = vault.get("current_citizen")
+    if current:
+        current_id = str(current.get("id", ""))
+        if current_id and not any(c.get("id") == current_id for c in roster):
+            roster.insert(0, current)
+    active_id = vault.get("active_deploy_citizen_id")
+    if not active_id and current:
+        active_id = current.get("id")
+
+    queue_cap = _queue_capacity_formula(vault)
+    roster_cap = _roster_capacity_formula(vault)
+
+    if len(roster) > roster_cap:
+        reserve.extend(roster[roster_cap:])
+        roster = roster[:roster_cap]
+    if len(queue) > queue_cap:
+        reserve.extend(queue[queue_cap:])
+        queue = queue[:queue_cap]
+
+    roster_ids = {citizen.get("id") for citizen in roster}
+    queue = [citizen for citizen in queue if citizen.get("id") not in roster_ids]
+    reserve = [citizen for citizen in reserve if citizen.get("id") not in roster_ids]
+
+    if active_id and active_id not in roster_ids:
+        active_id = roster[0].get("id") if roster else None
+    if not active_id and roster:
+        active_id = roster[0].get("id")
+
+    vault["citizen_queue"] = queue
+    vault["deploy_roster"] = roster
+    vault["citizen_reserve"] = reserve
+    vault["active_deploy_citizen_id"] = active_id
+    vault["citizen_queue_capacity"] = queue_cap
+    vault["deploy_roster_capacity"] = roster_cap
+    vault["current_citizen"] = next((citizen for citizen in roster if citizen.get("id") == active_id), None)
+    payload["vault"] = vault
+    payload["save_version"] = 3
+    return payload
 
 
 def _migrate_v0_to_v1(payload: dict[str, Any]) -> dict[str, Any]:
@@ -116,6 +195,7 @@ def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
 MIGRATION_STEPS: dict[int, Any] = {
     0: _migrate_v0_to_v1,
     1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
 }
 
 
@@ -255,7 +335,13 @@ class SlotStorage:
             entry["seed_preview"] = str(vault.last_run_seed if vault.last_run_seed is not None else vault.settings.base_seed)
             entry["last_distance"] = float(getattr(vault, "last_run_distance", 0.0) or 0.0)
             entry["last_time"] = int(getattr(vault, "last_run_time", 0) or 0)
-            entry["drafted_citizen"] = vault.current_citizen.name if vault.current_citizen else None
+            drafted = None
+            if getattr(vault, "active_deploy_citizen_id", None):
+                drafted = next(
+                    (citizen.name for citizen in getattr(vault, "deploy_roster", []) if citizen.id == vault.active_deploy_citizen_id),
+                    None,
+                )
+            entry["drafted_citizen"] = drafted or (vault.current_citizen.name if vault.current_citizen else None)
             entry.setdefault("slot_name", f"Slot {slot}")
         meta["last_slot"] = slot
         self._write_meta(meta)
@@ -299,7 +385,14 @@ class SlotStorage:
                         last_distance=float(getattr(vault, "last_run_distance", 0.0) or 0.0),
                         last_time=int(getattr(vault, "last_run_time", 0) or 0),
                         last_played=slot_meta.get("last_played"),
-                        drafted_citizen=vault.current_citizen.name if vault.current_citizen else slot_meta.get("drafted_citizen"),
+                        drafted_citizen=next(
+                            (
+                                citizen.name
+                                for citizen in getattr(vault, "deploy_roster", [])
+                                if citizen.id == getattr(vault, "active_deploy_citizen_id", None)
+                            ),
+                            vault.current_citizen.name if vault.current_citizen else slot_meta.get("drafted_citizen"),
+                        ),
                     )
                 )
             except Exception:

@@ -73,8 +73,19 @@ class DeathScene(Scene):
         y += 32
         draw_text(surface, f"Drone Recovery: {self.recovery_report.status} (chance {self.recovery_report.recovery_chance:.2f})", theme.get_font(20), theme.COLOR_TEXT, (self._panel_rect.left + 20, y))
         y += 30
-        draw_text(surface, f"TAV gain: +{self.recovery_report.tav_gain}", theme.get_font(20), theme.COLOR_SUCCESS, (self._panel_rect.left + 20, y))
-        y += 32
+        draw_text(surface, f"Tech Value (TAV) gain: +{self.recovery_report.tav_gain}", theme.get_font(20), theme.COLOR_SUCCESS, (self._panel_rect.left + 20, y))
+        y += 26
+        breakdown = [
+            f"Distance score: +{self.recovery_report.distance_tav}",
+            f"Recovered rare bonus: +{self.recovery_report.rare_bonus}",
+            f"Milestone bonus: +{self.recovery_report.milestone_bonus}",
+        ]
+        if self.recovery_report.penalty_adjustment != 0:
+            breakdown.append(f"Penalty adjustment: {self.recovery_report.penalty_adjustment:+d}")
+        for line in breakdown:
+            draw_text(surface, line, theme.get_font(16), theme.COLOR_TEXT_MUTED, (self._panel_rect.left + 20, y))
+            y += 18
+        y += 8
 
         recovered = ", ".join(f"{k}x{v}" for k, v in sorted(self.recovery_report.recovered.items())) or "-"
         lost = ", ".join(f"{k}x{v}" for k, v in sorted(self.recovery_report.lost.items())) or "-"

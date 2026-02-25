@@ -14,7 +14,7 @@ from bit_life_survival.core.drone import run_drone_recovery
 from bit_life_survival.core.engine import EventInstance, apply_choice_with_state_rng_detailed, create_initial_state, advance_to_next_event
 from bit_life_survival.core.models import EquippedSlots, LogEntry, make_log_entry
 from bit_life_survival.core.outcomes import OutcomeReport, apply_outcomes
-from bit_life_survival.core.persistence import refill_citizen_queue
+from bit_life_survival.core.persistence import get_active_deploy_citizen, on_run_finished
 from bit_life_survival.core.rng import DeterministicRNG
 from bit_life_survival.core.travel import compute_loadout_summary
 
@@ -55,6 +55,10 @@ class RunScene(Scene):
         self.finalized = False
         self._finish_kind: RunFinish = "death"
         self.tutorial_overlay: TutorialOverlay | None = None
+        self.tutorial_pending = False
+        self._defer_auto_step = False
+        self._result_continue_rect = pygame.Rect(0, 0, 0, 0)
+        self.deployed_citizen_id: str | None = None
 
         self.buttons: list[Button] = []
         self._last_size: tuple[int, int] | None = None
@@ -63,7 +67,9 @@ class RunScene(Scene):
         self._app = app
         self.state = create_initial_state(self.run_seed, self.biome_id)
         self.state.equipped = app.current_loadout.model_copy(deep=True)
-        citizen = app.save_data.vault.current_citizen
+        citizen = get_active_deploy_citizen(app.save_data.vault)
+        app.save_data.vault.current_citizen = citizen
+        self.deployed_citizen_id = citizen.id if citizen else None
         if citizen:
             for item_id, qty in citizen.kit.items():
                 if qty > 0:
@@ -86,8 +92,11 @@ class RunScene(Scene):
         if not bool(app.settings["gameplay"].get("tutorial_completed", False)) or bool(app.settings["gameplay"].get("replay_tutorial", False)):
             app.settings["gameplay"]["tutorial_completed"] = False
             app.settings["gameplay"]["replay_tutorial"] = False
+            self.tutorial_pending = True
             self.tutorial_overlay = None
-        if self.auto_step_once:
+        if self.auto_step_once and self.tutorial_pending:
+            self._defer_auto_step = True
+        elif self.auto_step_once:
             self._continue_step(app)
 
     def _build_tutorial(self, app) -> None:
@@ -113,7 +122,7 @@ class RunScene(Scene):
                 TutorialStep(
                     title="Gear Tags Unlock Options",
                     body="Tags from loadout items unlock better event choices. Death is expected; drone recovery still advances the vault.",
-                    target_rect_getter=lambda: self.top_rect,
+                    target_rect_getter=lambda: self.hud_rect,
                 ),
             ]
         )
@@ -207,8 +216,8 @@ class RunScene(Scene):
         report = run_drone_recovery(app.save_data.vault, self.state, app.content)
         app.save_data.vault.last_run_distance = float(self.state.distance)
         app.save_data.vault.last_run_time = int(self.state.time)
-        app.save_data.vault.current_citizen = None
-        refill_citizen_queue(app.save_data.vault, target_size=12)
+        on_run_finished(app.save_data.vault, result=self._finish_kind, citizen_id=self.deployed_citizen_id)
+        app.save_data.vault.current_citizen = get_active_deploy_citizen(app.save_data.vault)
         app.current_loadout = EquippedSlots()
         app.save_current_slot()
 
@@ -336,13 +345,6 @@ class RunScene(Scene):
                 self.help_overlay = False
             return
 
-        if self.tutorial_overlay and self.tutorial_overlay.visible:
-            result = self.tutorial_overlay.handle_event(event)
-            if result in {"done", "skip"}:
-                app.settings["gameplay"]["tutorial_completed"] = True
-                app.save_settings()
-            return
-
         if self.confirm_retreat_overlay:
             if event.type == pygame.KEYDOWN:
                 if event.key in {pygame.K_y, pygame.K_RETURN}:
@@ -355,8 +357,12 @@ class RunScene(Scene):
             return
 
         if self.result_overlay:
-            if event.type in {pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN}:
+            if event.type == pygame.KEYDOWN and event.key in {pygame.K_RETURN, pygame.K_SPACE}:
                 self.result_overlay = None
+                self._result_continue_rect = pygame.Rect(0, 0, 0, 0)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._result_continue_rect.collidepoint(event.pos):
+                self.result_overlay = None
+                self._result_continue_rect = pygame.Rect(0, 0, 0, 0)
             return
 
         if self.event_overlay:
@@ -379,6 +385,15 @@ class RunScene(Scene):
                 self._handle_event_modal_click(event.pos)
             return
 
+        if self.tutorial_overlay and self.tutorial_overlay.visible:
+            result = self.tutorial_overlay.handle_event(event)
+            if result in {"done", "skip"}:
+                self.tutorial_pending = False
+                app.settings["gameplay"]["tutorial_completed"] = True
+                app.save_settings()
+                self.tutorial_overlay = None
+            return
+
         for button in self.buttons:
             if button.handle_event(event):
                 return
@@ -396,13 +411,18 @@ class RunScene(Scene):
                 return
 
     def update(self, app, dt: float) -> None:
+        if self.tutorial_pending and self.tutorial_overlay is None and not self.event_overlay and not self.result_overlay:
+            self._build_tutorial(app)
+        if self._defer_auto_step and not self.tutorial_pending and self.tutorial_overlay is None and not self.event_overlay:
+            self._defer_auto_step = False
+            self._continue_step(app)
         self._finalize_if_dead(app)
         if getattr(app, "quit_after_scene", False) and self.finalized:
             app.quit()
 
     def render(self, app, surface: pygame.Surface) -> None:
         self._build_layout(app)
-        if not bool(app.settings["gameplay"].get("tutorial_completed", False)):
+        if self.tutorial_pending and not self.event_overlay and not self.result_overlay and self.tutorial_overlay is None:
             self._build_tutorial(app)
         app.backgrounds.draw(surface, self.state.biome_id if self.state else self.biome_id)
 
@@ -501,7 +521,7 @@ class RunScene(Scene):
             self._draw_result_modal(surface)
         if self.help_overlay:
             self._draw_help_overlay(surface)
-        if self.tutorial_overlay and self.tutorial_overlay.visible:
+        if self.tutorial_overlay and self.tutorial_overlay.visible and not self.event_overlay and not self.result_overlay:
             self.tutorial_overlay.draw(surface)
         if self.confirm_retreat_overlay:
             self._draw_confirm_retreat(surface)
@@ -546,7 +566,7 @@ class RunScene(Scene):
                 label = f"{label} (LOCKED: {reason})"
             draw_text(surface, label, theme.get_font(16), theme.COLOR_TEXT if not option.locked else theme.COLOR_TEXT_MUTED, (row.left + 8, row.centery), "midleft")
             y += 48
-        hint = "1-4 select option | R retreat | Q quit | H help | Enter dismiss"
+        hint = "1-4 select option | R retreat | Q quit | H help"
         draw_text(surface, hint, theme.get_font(15), theme.COLOR_TEXT_MUTED, (modal_rect.left + 16, modal_rect.bottom - 20), "midleft")
 
     def _draw_result_modal(self, surface: pygame.Surface) -> None:
@@ -601,7 +621,17 @@ class RunScene(Scene):
                 draw_text(surface, wrapped, theme.get_font(16), theme.COLOR_TEXT_MUTED, (modal_rect.left + 190, y))
                 y += 20
             y += 4
-        draw_text(surface, "Press Enter or click to continue", theme.get_font(15), theme.COLOR_TEXT_MUTED, (modal_rect.centerx, modal_rect.bottom - 18), "center")
+        self._result_continue_rect = pygame.Rect(modal_rect.centerx - 150, modal_rect.bottom - 36, 300, 24)
+        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._result_continue_rect, border_radius=2)
+        pygame.draw.rect(surface, theme.COLOR_BORDER, self._result_continue_rect, width=1, border_radius=2)
+        draw_text(
+            surface,
+            "Continue (Enter / Space / Click)",
+            theme.get_font(14),
+            theme.COLOR_TEXT_MUTED,
+            self._result_continue_rect.center,
+            "center",
+        )
 
     def _draw_help_overlay(self, surface: pygame.Surface) -> None:
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)

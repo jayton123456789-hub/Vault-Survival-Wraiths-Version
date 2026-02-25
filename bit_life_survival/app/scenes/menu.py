@@ -113,19 +113,17 @@ class MainMenuScene(Scene):
 
         draw_text(surface, "VAULT", theme.get_font(86, bold=True), (36, 22, 48), (self._panel_rect.centerx + 2, self._panel_rect.top + 82), "center")
         draw_text(surface, "SURVIVAL", theme.get_font(72, bold=True), (36, 22, 48), (self._panel_rect.centerx + 2, self._panel_rect.top + 140), "center")
-        draw_text(surface, "VAULT", theme.get_font(86, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 80), "center")
-        draw_text(surface, "SURVIVAL", theme.get_font(72, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 138), "center")
         t = pygame.time.get_ticks() / 1000.0
         path = [
-            (self._title_rect.left + 60, self._title_rect.top + 82),
+            (self._title_rect.left + 68, self._title_rect.top + 86),
             (self._title_rect.left + 130, self._title_rect.top + 66),
-            (self._title_rect.left + 210, self._title_rect.top + 74),
-            (self._title_rect.left + 290, self._title_rect.top + 62),
-            (self._title_rect.left + 344, self._title_rect.top + 84),
-            (self._title_rect.left + 286, self._title_rect.top + 126),
-            (self._title_rect.left + 220, self._title_rect.top + 136),
-            (self._title_rect.left + 150, self._title_rect.top + 132),
-            (self._title_rect.left + 88, self._title_rect.top + 138),
+            (self._title_rect.left + 212, self._title_rect.top + 72),
+            (self._title_rect.left + 292, self._title_rect.top + 64),
+            (self._title_rect.left + 352, self._title_rect.top + 82),
+            (self._title_rect.left + 314, self._title_rect.top + 120),
+            (self._title_rect.left + 252, self._title_rect.top + 134),
+            (self._title_rect.left + 168, self._title_rect.top + 136),
+            (self._title_rect.left + 98, self._title_rect.top + 132),
         ]
         speed = 1.8
         total = len(path)
@@ -135,7 +133,9 @@ class MainMenuScene(Scene):
         frac = seg - i0
         x = int(path[i0][0] + (path[i1][0] - path[i0][0]) * frac)
         y = int(path[i0][1] + (path[i1][1] - path[i0][1]) * frac - abs(math.sin(frac * math.pi)) * 7)
-        draw_citizen_sprite(surface, x, y, citizen_id="menu_mascot", scale=2, selected=True, walk_phase=t * 1.7)
+        draw_citizen_sprite(surface, x, y, citizen_id="menu_mascot", scale=2, selected=True, walk_phase=t * 1.7, pose="jump")
+        draw_text(surface, "VAULT", theme.get_font(86, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 80), "center")
+        draw_text(surface, "SURVIVAL", theme.get_font(72, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 138), "center")
         draw_text(
             surface,
             "Choose a protocol to continue.",

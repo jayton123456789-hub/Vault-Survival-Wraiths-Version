@@ -33,7 +33,7 @@ class LoadGameScene(Scene):
         self.slot_buttons = []
         self._slot_cards = list(rows)
         for row, slot in zip(self._slot_cards, self._slot_ids):
-            button_rect = pygame.Rect(row.left + 6, row.top + 6, row.width - 12, max(44, row.height // 2 - 6))
+            button_rect = pygame.Rect(row.left + 6, row.top + 6, row.width - 12, 44)
             self.slot_buttons.append(Button(button_rect, f"Slot {slot}", on_click=lambda s=slot: self._load_slot(app, s)))
         self.back_button = Button(
             pygame.Rect(panel_rect.left + 20, panel_rect.bottom - 48, 180, 34),
@@ -88,8 +88,8 @@ class LoadGameScene(Scene):
             else:
                 line1 = "No save data"
                 line2 = "This slot is empty."
-            draw_text(surface, line1, theme.get_font(13), theme.COLOR_TEXT_MUTED, (card.left + 10, card.bottom - 30))
-            draw_text(surface, line2, theme.get_font(13), theme.COLOR_TEXT_MUTED, (card.left + 10, card.bottom - 14))
+            draw_text(surface, line1, theme.get_font(13), theme.COLOR_TEXT_MUTED, (card.left + 10, card.top + 60))
+            draw_text(surface, line2, theme.get_font(13), theme.COLOR_TEXT_MUTED, (card.left + 10, card.top + 76))
 
         if self.back_button:
             self.back_button.draw(surface, mouse_pos)

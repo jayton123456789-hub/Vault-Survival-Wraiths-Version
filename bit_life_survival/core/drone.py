@@ -16,6 +16,10 @@ class DroneRecoveryReport:
     lost: dict[str, int]
     tav_gain: int
     milestone_awards: list[str]
+    distance_tav: int
+    rare_bonus: int
+    milestone_bonus: int
+    penalty_adjustment: int
 
 
 def _pack_recovery_bonus(pack_rarity: ItemRarity | None) -> float:
@@ -135,12 +139,14 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
     recovered_items = sum(recovered.values())
     status = _recovery_status(total_items, recovered_items)
 
-    tav_gain = _distance_tav(state.distance)
-    tav_gain += _rare_item_bonus(recovered, content)
+    distance_tav = _distance_tav(state.distance)
+    rare_bonus = _rare_item_bonus(recovered, content)
     milestone_bonus, milestone_awards = _milestone_bonus(vault, state.distance)
-    tav_gain += milestone_bonus
+    penalty_adjustment = 0
+    tav_gain = distance_tav + rare_bonus + milestone_bonus
     if status == "lost":
-        tav_gain = max(0, tav_gain - 3)
+        penalty_adjustment = -3
+        tav_gain = max(0, tav_gain + penalty_adjustment)
 
     vault.tav += tav_gain
     vault.vault_level = max(1, 1 + vault.tav // 75)
@@ -152,4 +158,8 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
         lost=lost,
         tav_gain=tav_gain,
         milestone_awards=milestone_awards,
+        distance_tav=distance_tav,
+        rare_bonus=rare_bonus,
+        milestone_bonus=milestone_bonus,
+        penalty_adjustment=penalty_adjustment,
     )
