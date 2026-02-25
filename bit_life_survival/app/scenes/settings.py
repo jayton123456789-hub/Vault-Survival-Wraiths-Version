@@ -114,7 +114,7 @@ class SettingsScene(Scene):
                 )
             )
         elif self.tab == "video":
-            rows = [pygame.Rect(content.left, content.top + i * 56, content.width, 44) for i in range(4)]
+            rows = [pygame.Rect(content.left, content.top + i * 56, content.width, 44) for i in range(5)]
             res = tuple(app.settings["video"].get("resolution", [1280, 720]))
             scale = float(app.settings["video"].get("ui_scale", 1.0))
             self.buttons.append(
@@ -128,6 +128,13 @@ class SettingsScene(Scene):
             )
             self.buttons.append(
                 Button(rows[3], f"VSync: {bool(app.settings['video'].get('vsync', False))}", on_click=lambda: self._toggle(app, "video", "vsync"))
+            )
+            self.buttons.append(
+                Button(
+                    rows[4],
+                    f"Theme: {app.settings['video'].get('ui_theme', theme.DEFAULT_THEME)}",
+                    on_click=lambda: self._cycle_value(app, "video", "ui_theme", list(theme.available_themes())),
+                )
             )
         elif self.tab == "audio":
             rows = [pygame.Rect(content.left, content.top + i * 62, content.width, 48) for i in range(3)]

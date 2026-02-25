@@ -25,6 +25,7 @@ class VideoSettings(BaseModel):
     resolution: list[int] = Field(default_factory=lambda: [1280, 720], min_length=2, max_length=2)
     ui_scale: float = Field(default=1.0, ge=0.75, le=1.5)
     vsync: bool = False
+    ui_theme: str = "amethyst"
 
 
 class AudioSettings(BaseModel):

@@ -18,7 +18,6 @@ class RoomActor:
     citizen_id: str
     x_norm: float
     vx_norm: float
-    lane: int
     hop_phase: float
     walk_phase: float
 
@@ -33,6 +32,7 @@ class ClawRoom:
         self.claw_target_id: str | None = None
         self.claw_target_x_norm: float = 0.5
         self.claw_holding: bool = False
+        self._stack_levels: dict[str, int] = {}
         self._finished_target_id: str | None = None
         self._last_hitboxes: dict[str, pygame.Rect] = {}
         self._time_s: float = 0.0
@@ -51,14 +51,12 @@ class ClawRoom:
         x_norm = min(0.95, max(0.05, spread + jitter))
         speed = 0.06 + (seed[1] / 255.0) * 0.08
         direction = -1.0 if seed[2] % 2 else 1.0
-        lane = seed[3] % 2
-        hop_phase = (seed[4] / 255.0) * math.tau
-        walk_phase = (seed[5] / 255.0) * math.tau
+        hop_phase = (seed[3] / 255.0) * math.tau
+        walk_phase = (seed[4] / 255.0) * math.tau
         return RoomActor(
             citizen_id=citizen_id,
             x_norm=x_norm,
             vx_norm=speed * direction,
-            lane=lane,
             hop_phase=hop_phase,
             walk_phase=walk_phase,
         )
@@ -104,13 +102,33 @@ class ClawRoom:
             if self.claw_holding and actor.citizen_id == self.claw_target_id:
                 continue
             actor.x_norm += actor.vx_norm * dt
-            if actor.x_norm < 0.05:
-                actor.x_norm = 0.05
+            if actor.x_norm < 0.04:
+                actor.x_norm = 0.04
                 actor.vx_norm = abs(actor.vx_norm)
-            elif actor.x_norm > 0.95:
-                actor.x_norm = 0.95
+            elif actor.x_norm > 0.96:
+                actor.x_norm = 0.96
                 actor.vx_norm = -abs(actor.vx_norm)
             actor.walk_phase += dt * 5.0
+
+        # Soft collision and stacking. Actors can bump and climb over each other.
+        self._stack_levels = {actor_id: 0 for actor_id in self.actors.keys()}
+        sorted_ids = [actor.citizen_id for actor in sorted(self.actors.values(), key=lambda a: a.x_norm)]
+        for i in range(len(sorted_ids)):
+            left = self.actors[sorted_ids[i]]
+            if self.claw_holding and left.citizen_id == self.claw_target_id:
+                continue
+            for j in range(i + 1, len(sorted_ids)):
+                right = self.actors[sorted_ids[j]]
+                if self.claw_holding and right.citizen_id == self.claw_target_id:
+                    continue
+                gap = right.x_norm - left.x_norm
+                if gap > 0.085:
+                    break
+                if gap < 0.046:
+                    push = (0.046 - gap) * 0.5
+                    left.x_norm = max(0.04, left.x_norm - push)
+                    right.x_norm = min(0.96, right.x_norm + push)
+                    self._stack_levels[right.citizen_id] = min(2, max(self._stack_levels[right.citizen_id], self._stack_levels[left.citizen_id] + 1))
 
         if self.claw_phase == "idle":
             self.claw_x_norm = 0.5 + math.sin(self._time_s * 0.5) * 0.04
@@ -125,12 +143,12 @@ class ClawRoom:
                 self.claw_x_norm = self.claw_target_x_norm
                 self.claw_phase = "drop"
         elif self.claw_phase == "drop":
-            self.claw_depth_norm = min(1.0, self.claw_depth_norm + dt * 1.8)
+            self.claw_depth_norm = min(1.0, self.claw_depth_norm + dt * 2.0)
             if self.claw_depth_norm >= 1.0:
                 self.claw_holding = True
                 self.claw_phase = "lift"
         elif self.claw_phase == "lift":
-            self.claw_depth_norm = max(0.0, self.claw_depth_norm - dt * 1.8)
+            self.claw_depth_norm = max(0.0, self.claw_depth_norm - dt * 2.0)
             if self.claw_depth_norm <= 0.0:
                 self.claw_depth_norm = 0.0
                 self.claw_phase = "return"
@@ -152,9 +170,10 @@ class ClawRoom:
         if selected:
             walk += 0.4
         x = room_rect.left + int(actor.x_norm * room_rect.width)
-        lane_ground = room_rect.bottom - 20 - actor.lane * 12
-        hop = abs(math.sin(self._time_s * 3.2 + actor.hop_phase)) * (3 + actor.lane)
-        y = lane_ground - int(hop)
+        stack_level = self._stack_levels.get(actor.citizen_id, 0)
+        base_ground = room_rect.bottom - 20
+        hop = abs(math.sin(self._time_s * 3.2 + actor.hop_phase)) * 3.0
+        y = base_ground - int(stack_level * 9) - int(hop)
         return x, y, walk
 
     def pick_actor(self, pos: tuple[int, int]) -> str | None:
@@ -182,19 +201,26 @@ class ClawRoom:
 
         # Rail and claw body
         rail_y = glass.top + 30
-        pygame.draw.line(surface, (138, 118, 92), (glass.left + 12, rail_y), (glass.right - 12, rail_y), 2)
+        pygame.draw.line(surface, (162, 142, 112), (glass.left + 12, rail_y), (glass.right - 12, rail_y), 2)
         claw_x = glass.left + int(self.claw_x_norm * (glass.width - 1))
         claw_top = rail_y + 2
         claw_bottom = claw_top + int(self.claw_depth_norm * (glass.height - 56))
-        pygame.draw.line(surface, (204, 186, 152), (claw_x, claw_top), (claw_x, claw_bottom), 1)
-        head = pygame.Rect(claw_x - 7, claw_bottom - 2, 14, 8)
-        pygame.draw.rect(surface, (122, 102, 84), head, border_radius=1)
+        carriage = pygame.Rect(claw_x - 11, rail_y - 7, 22, 8)
+        pygame.draw.rect(surface, (100, 84, 62), carriage, border_radius=1)
+        pygame.draw.rect(surface, theme.COLOR_BORDER, carriage, width=1, border_radius=1)
+        pygame.draw.line(surface, (216, 198, 162), (claw_x, claw_top), (claw_x, claw_bottom), 1)
+        head = pygame.Rect(claw_x - 8, claw_bottom - 2, 16, 8)
+        pygame.draw.rect(surface, (132, 112, 86), head, border_radius=1)
         pygame.draw.rect(surface, theme.COLOR_BORDER, head, width=1, border_radius=1)
-        pygame.draw.line(surface, (194, 176, 142), (head.left + 1, head.bottom), (head.left - 3, head.bottom + 6), 1)
-        pygame.draw.line(surface, (194, 176, 142), (head.right - 1, head.bottom), (head.right + 3, head.bottom + 6), 1)
+        pygame.draw.line(surface, (198, 178, 142), (head.centerx, head.bottom), (head.centerx, head.bottom + 6), 1)
+        pygame.draw.line(surface, (198, 178, 142), (head.left + 2, head.bottom), (head.left - 3, head.bottom + 6), 1)
+        pygame.draw.line(surface, (198, 178, 142), (head.right - 2, head.bottom), (head.right + 3, head.bottom + 6), 1)
 
         citizens_by_id = {citizen.id: citizen for citizen in citizens}
-        draw_order = sorted(self.actors.values(), key=lambda actor: actor.lane)
+        draw_order = sorted(
+            self.actors.values(),
+            key=lambda actor: (self._stack_levels.get(actor.citizen_id, 0), actor.x_norm),
+        )
         for actor in draw_order:
             citizen = citizens_by_id.get(actor.citizen_id)
             if citizen is None:
@@ -202,13 +228,13 @@ class ClawRoom:
 
             selected = self.selected_id == actor.citizen_id
             if self.claw_holding and actor.citizen_id == self.claw_target_id:
-                draw_x = claw_x - 9
+                draw_x = claw_x - 16
                 draw_y = claw_bottom + 8
                 walk_phase = self._time_s * 2.0
             else:
                 x, y, walk_phase = self._actor_position(glass, actor, selected)
-                draw_x = x - 9
-                draw_y = y - 24
+                draw_x = x - 16
+                draw_y = y - 32
 
             sprite_rect = draw_citizen_sprite(
                 surface,

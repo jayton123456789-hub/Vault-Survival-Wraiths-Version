@@ -38,6 +38,7 @@ class GameApp:
         self.content = self._load_content()
         self.settings_store = SettingsStore(self.user_paths.config / "settings.json")
         self.settings = self.settings_store.load()
+        self.settings["video"]["ui_theme"] = theme.apply_theme(self.settings["video"].get("ui_theme", theme.DEFAULT_THEME))
         slot_count = int(self.settings.get("gameplay", {}).get("save_slots", 3))
         self.save_service = SaveService(self.user_paths.saves, slot_count=slot_count)
         self.audio = AudioService()
@@ -81,7 +82,13 @@ class GameApp:
     def save_settings(self) -> None:
         self.settings_store.save(self.settings)
 
+    def apply_theme(self) -> None:
+        selected = self.settings["video"].get("ui_theme", theme.DEFAULT_THEME)
+        applied = theme.apply_theme(selected)
+        self.settings["video"]["ui_theme"] = applied
+
     def apply_video_settings(self) -> None:
+        self.apply_theme()
         video = self.settings["video"]
         resolution = tuple(video.get("resolution", [1280, 720]))
         fullscreen = bool(video.get("fullscreen", False))

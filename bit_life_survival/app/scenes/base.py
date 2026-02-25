@@ -10,7 +10,7 @@ from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
 from bit_life_survival.core.crafting import can_craft, craft
 from bit_life_survival.core.models import GameState
-from bit_life_survival.core.persistence import draft_citizen_from_claw, draft_selected_citizen, refill_citizen_queue, storage_used
+from bit_life_survival.core.persistence import citizen_queue_target, draft_citizen_from_claw, draft_selected_citizen, refill_citizen_queue, storage_used
 from bit_life_survival.core.rng import DeterministicRNG
 from bit_life_survival.core.travel import compute_loadout_summary
 
@@ -137,11 +137,66 @@ class BaseScene(Scene):
 
         app.change_scene(SettingsScene(return_scene_factory=lambda: BaseScene()))
 
+    def _set_module(self, module: str) -> None:
+        if module == self.selected_module:
+            if module == "storage":
+                self.message = "Storage is open. Select an item row to inspect details."
+            elif module == "crafting":
+                self.message = "Crafting is open. Select a recipe to preview requirements."
+            else:
+                self.message = "Drone Bay status is open."
+            return
+        self.selected_module = module
+        if module == "storage":
+            self.message = "Opened storage module."
+        elif module == "crafting":
+            self.message = "Opened crafting module."
+        else:
+            self.message = "Opened drone bay module."
+
     def _main_menu(self, app) -> None:
         app.return_staged_loadout()
         from .menu import MainMenuScene
 
         app.change_scene(MainMenuScene())
+
+    def _story_status(self, app) -> tuple[str, list[str], str]:
+        vault = app.save_data.vault
+        target = citizen_queue_target(vault)
+        if vault.run_counter < 1:
+            title = "Chapter 1: First Door"
+            lines = [
+                "You just sealed the vault hatch.",
+                "Draft your first scavenger and gather parts.",
+                "Every run powers the vault's next expansion.",
+            ]
+            objective = "Objective: complete your first deployment."
+        elif vault.tav < 40:
+            title = "Chapter 2: Power Grid"
+            lines = [
+                "The relay room still flickers.",
+                "Bring back salvage to stabilize core systems.",
+                "A stronger grid increases citizen capacity.",
+            ]
+            objective = f"Objective: reach Tech Value 40 (now {vault.tav})."
+        elif vault.vault_level < 2:
+            title = "Chapter 3: Expansion"
+            lines = [
+                "Support beams are ready for a new wing.",
+                "Deploy often and keep citizens alive.",
+                "Each milestone opens deeper expedition routes.",
+            ]
+            objective = "Objective: push vault level to 2."
+        else:
+            title = "Chapter 4: Long Haul"
+            lines = [
+                "The vault is operating, but the wasteland evolves.",
+                "Rotate citizens, refine loadouts, and keep pressure up.",
+                "Drone Bay upgrades reduce recovery losses.",
+            ]
+            objective = "Objective: maintain progress and rare recoveries."
+        capacity_note = f"Citizen Capacity: {len(vault.citizen_queue)}/{target}"
+        return title, lines, f"{objective}  {capacity_note}"
 
     def _cycle_storage_filter(self, app, which: str) -> None:
         if which == "slot":
@@ -241,9 +296,9 @@ class BaseScene(Scene):
         tab_cols = split_columns(tab_row, [1, 1, 1], gap=8)
         self.buttons.extend(
             [
-                Button(tab_cols[0], "Storage", on_click=lambda: setattr(self, "selected_module", "storage"), tooltip="Gear storage and filters."),
-                Button(tab_cols[1], "Crafting", on_click=lambda: setattr(self, "selected_module", "crafting"), tooltip="Craft from materials."),
-                Button(tab_cols[2], "Drone Bay", on_click=lambda: setattr(self, "selected_module", "drone"), tooltip="Recovery system status."),
+                Button(tab_cols[0], "Storage", on_click=lambda: self._set_module("storage"), tooltip="Open full storage module."),
+                Button(tab_cols[1], "Crafting", on_click=lambda: self._set_module("crafting"), tooltip="Craft from materials."),
+                Button(tab_cols[2], "Drone Bay", on_click=lambda: self._set_module("drone"), tooltip="Recovery system status."),
             ]
         )
 
@@ -272,26 +327,29 @@ class BaseScene(Scene):
             self.buttons.append(craft_btn)
 
         right_inner = pygame.Rect(right.left + 10, right.top + 36, right.width - 20, right.height - 46)
-        self._right_top_rect, self._right_bottom_rect = split_rows(right_inner, [0.38, 0.62], gap=8)
+        self._right_top_rect, self._right_bottom_rect = split_rows(right_inner, [0.46, 0.54], gap=8)
 
         bottom_cols = split_columns(
             pygame.Rect(bottom.left + 8, bottom.top + 8, bottom.width - 16, bottom.height - 16),
-            [1, 1, 1, 1],
+            [1, 1, 1, 1, 1],
             gap=8,
         )
         loadout_btn = Button(bottom_cols[0], "Loadout", hotkey=pygame.K_l, on_click=lambda: self._open_loadout(app), tooltip="Open loadout.")
-        deploy_btn = Button(bottom_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), tooltip="Start briefing and run.")
-        settings_btn = Button(bottom_cols[2], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), tooltip="Open settings.")
-        menu_btn = Button(bottom_cols[3], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._main_menu(app), tooltip="Return to menu.")
+        storage_btn = Button(bottom_cols[1], "Storage", hotkey=pygame.K_g, on_click=lambda: self._set_module("storage"), tooltip="Focus storage module.")
+        deploy_btn = Button(bottom_cols[2], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), tooltip="Start briefing and run.")
+        settings_btn = Button(bottom_cols[3], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), tooltip="Open settings.")
+        menu_btn = Button(bottom_cols[4], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._main_menu(app), tooltip="Return to menu.")
         loadout_btn.bg = (86, 112, 98)
+        storage_btn.bg = (78, 116, 120)
         deploy_btn.bg = (76, 124, 92)
         settings_btn.bg = (86, 106, 112)
         menu_btn.bg = (116, 72, 82)
         loadout_btn.bg_hover = (120, 152, 132)
+        storage_btn.bg_hover = (108, 152, 164)
         deploy_btn.bg_hover = (106, 162, 122)
         settings_btn.bg_hover = (118, 142, 152)
         menu_btn.bg_hover = (154, 96, 110)
-        self.buttons.extend([loadout_btn, deploy_btn, settings_btn, menu_btn])
+        self.buttons.extend([loadout_btn, storage_btn, deploy_btn, settings_btn, menu_btn])
 
     def _draw_storage_row(
         self,
@@ -333,7 +391,12 @@ class BaseScene(Scene):
     def _draw_top_bar(self, app, surface: pygame.Surface) -> None:
         vault = app.save_data.vault
         used = storage_used(vault)
-        line1 = f"Vault Lv {vault.vault_level}    TAV {vault.tav}    Drone Bay {int(vault.upgrades.get('drone_bay_level', 0))}    Storage Used {used}"
+        line1 = (
+            f"Vault Lv {vault.vault_level}    "
+            f"Tech Value (TAV) {vault.tav}    "
+            f"Drone Bay {int(vault.upgrades.get('drone_bay_level', 0))}    "
+            f"Storage Used {used}"
+        )
         draw_text(surface, line1, theme.get_font(22, bold=True), theme.COLOR_TEXT, (self._top_rect.left + 14, self._top_rect.top + 52))
 
     def _draw_materials_row(self, app, surface: pygame.Surface) -> None:
@@ -370,8 +433,17 @@ class BaseScene(Scene):
         pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._right_top_rect, border_radius=2)
         pygame.draw.rect(surface, theme.COLOR_BORDER, self._right_top_rect, width=2, border_radius=2)
         y = self._right_top_rect.top + 8
-        draw_text(surface, "What To Do Next", theme.get_font(18, bold=True), theme.COLOR_TEXT, (self._right_top_rect.left + 8, y))
-        y += 24
+        chapter, lore_lines, objective_line = self._story_status(app)
+        draw_text(surface, chapter, theme.get_font(16, bold=True), theme.COLOR_TEXT, (self._right_top_rect.left + 8, y))
+        y += 20
+        for line in lore_lines:
+            for wrapped in wrap_text(line, theme.get_font(12), self._right_top_rect.width - 16):
+                draw_text(surface, wrapped, theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._right_top_rect.left + 8, y))
+                y += 14
+            y += 1
+        y += 2
+        draw_text(surface, "What To Do Next", theme.get_font(16, bold=True), theme.COLOR_TEXT, (self._right_top_rect.left + 8, y))
+        y += 20
         has_citizen = app.save_data.vault.current_citizen is not None
         has_loadout = any(bool(v) for v in app.current_loadout.model_dump(mode="python").values())
         steps = [
@@ -385,7 +457,8 @@ class BaseScene(Scene):
             draw_text(surface, f"{prefix} {text}", theme.get_font(14, bold=done), color, (self._right_top_rect.left + 8, y))
             y += 18
         if not has_citizen:
-            draw_text(surface, "Tip: Use The Claw to draft.", theme.get_font(13), theme.COLOR_WARNING, (self._right_top_rect.left + 8, self._right_top_rect.bottom - 16))
+            draw_text(surface, "Tip: Use The Claw to draft.", theme.get_font(13), theme.COLOR_WARNING, (self._right_top_rect.left + 8, self._right_top_rect.bottom - 30))
+        draw_text(surface, objective_line, theme.get_font(11), theme.COLOR_TEXT_MUTED, (self._right_top_rect.left + 8, self._right_top_rect.bottom - 14))
 
         # Lower detail panel
         pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._right_bottom_rect, border_radius=2)
@@ -441,7 +514,7 @@ class BaseScene(Scene):
     def update(self, app, dt: float) -> None:
         if app.save_data is None:
             return
-        refill_citizen_queue(app.save_data.vault, target_size=12)
+        refill_citizen_queue(app.save_data.vault)
         self.claw_room.sync(app.save_data.vault.citizen_queue)
         self.claw_room.update(dt)
         finished_target = self.claw_room.consume_finished_target()

@@ -7,7 +7,8 @@ from .models import MATERIAL_ITEM_IDS, EquippedSlots, SAVE_VERSION, Citizen, Sav
 from .rng import DeterministicRNG
 from .save_system import migrate_save
 
-DEFAULT_QUEUE_TARGET = 12
+DEFAULT_QUEUE_TARGET = 4
+MAX_QUEUE_TARGET = 12
 
 NAME_POOL = [
     "Ari",
@@ -92,6 +93,14 @@ def _default_storage() -> dict[str, int]:
     }
 
 
+def citizen_queue_target(vault: VaultState) -> int:
+    vault_bonus = max(0, int(vault.vault_level) - 1)
+    tav_bonus = min(4, int(vault.tav) // 40)
+    drone_bonus = max(0, int(vault.upgrades.get("drone_bay_level", 0)))
+    target = DEFAULT_QUEUE_TARGET + vault_bonus + tav_bonus + drone_bonus
+    return max(DEFAULT_QUEUE_TARGET, min(MAX_QUEUE_TARGET, target))
+
+
 def create_default_vault_state(base_seed: int = 1337) -> VaultState:
     claw_seed = DeterministicRNG.from_seed(f"{base_seed}:claw")
     vault = VaultState(
@@ -110,7 +119,7 @@ def create_default_vault_state(base_seed: int = 1337) -> VaultState:
         claw_rng_calls=claw_seed.calls,
         settings=SettingsState(base_seed=base_seed),
     )
-    refill_citizen_queue(vault, target_size=DEFAULT_QUEUE_TARGET)
+    refill_citizen_queue(vault)
     return vault
 
 
@@ -181,8 +190,10 @@ def storage_used(vault: VaultState) -> int:
     return sum(max(0, int(qty)) for qty in vault.storage.values())
 
 
-def refill_citizen_queue(vault: VaultState, target_size: int = DEFAULT_QUEUE_TARGET) -> None:
+def refill_citizen_queue(vault: VaultState, target_size: int | None = None) -> None:
     rng = _claw_rng(vault)
+    if target_size is None:
+        target_size = citizen_queue_target(vault)
     sequence = vault.run_counter * 1000 + len(vault.citizen_queue)
     while len(vault.citizen_queue) < target_size:
         sequence += 1
@@ -192,7 +203,7 @@ def refill_citizen_queue(vault: VaultState, target_size: int = DEFAULT_QUEUE_TAR
 
 def draft_citizen_from_claw(vault: VaultState, preview_count: int = 5) -> Citizen:
     if not vault.citizen_queue:
-        refill_citizen_queue(vault, target_size=DEFAULT_QUEUE_TARGET)
+        refill_citizen_queue(vault)
 
     rng = _claw_rng(vault)
     window = min(preview_count, len(vault.citizen_queue))
@@ -200,7 +211,7 @@ def draft_citizen_from_claw(vault: VaultState, preview_count: int = 5) -> Citize
     selected = vault.citizen_queue.pop(index)
     vault.current_citizen = selected
     _save_claw_rng(vault, rng)
-    refill_citizen_queue(vault, target_size=DEFAULT_QUEUE_TARGET)
+    refill_citizen_queue(vault)
     return selected
 
 
@@ -209,6 +220,6 @@ def draft_selected_citizen(vault: VaultState, citizen_id: str) -> Citizen:
         if candidate.id == citizen_id:
             selected = vault.citizen_queue.pop(idx)
             vault.current_citizen = selected
-            refill_citizen_queue(vault, target_size=DEFAULT_QUEUE_TARGET)
+            refill_citizen_queue(vault)
             return selected
     raise ValueError(f"Citizen '{citizen_id}' not found in queue.")
