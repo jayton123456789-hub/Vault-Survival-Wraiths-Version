@@ -1,0 +1,1 @@
+checks=[(Path('bit_life_survival/core/travel.py'),'state.meters.hydration'),(Path('bit_life_survival/core/travel.py'),'state.meters.stamina'),(Path('bit_life_survival/core/travel.py'),'state.injury  

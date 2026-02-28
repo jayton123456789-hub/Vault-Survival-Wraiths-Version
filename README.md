@@ -26,7 +26,13 @@ Run installer/move helper:
    - `.venv\Scripts\python -m bit_life_survival.app.main`
 
 Flow:
-- Intro -> Main Menu -> New/Load -> Base -> Loadout -> Run -> Event/Result -> Death/Retreat report
+- Intro -> Main Menu -> New/Load -> Base -> Operations Hub (Loadout/Inventory/Storage/Crafting tabs) -> Briefing -> Run -> Event/Result -> Death/Retreat report
+
+## Core Controls
+- Base: `U` use claw, `Enter` draft selected, `L` Operations, `D` Deploy, `B` Drone Bay, `S` Settings, `H` Help.
+- Operations Hub tabs: click `Loadout / Inventory / Storage / Crafting` (top tabs).
+- Operations actions: `B` equip best, `A` equip all, `D` deploy, `Esc` back.
+- Run: `C` continue, `L` log, `R` retreat, `E` use aid, `Q` quit, `H` help.
 
 ## One-Click Launcher
 - `tools\run_game.cmd`

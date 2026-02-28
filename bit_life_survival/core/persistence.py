@@ -82,16 +82,12 @@ def _make_citizen(rng: DeterministicRNG, sequence: int) -> Citizen:
 
 def _default_storage() -> dict[str, int]:
     return {
-        "water_pouch": 4,
-        "ration_pack": 4,
+        "water_pouch": 2,
+        "ration_pack": 2,
         "backpack_basic": 1,
         "armor_scrap": 1,
         "bike_rusty": 1,
-        "filter_mask": 1,
         "lockpick_set": 1,
-        "radio_parts": 1,
-        "badge_police": 1,
-        "med_armband": 1,
     }
 
 
@@ -411,6 +407,13 @@ def on_run_finished(vault: VaultState, result: str, citizen_id: str | None = Non
             vault.current_citizen = None
     elif result == "retreat":
         # Citizen remains in roster. If active is missing due older state, restore.
+        if target_id and not any(c.id == target_id for c in vault.deploy_roster) and vault.current_citizen:
+            if not _roster_is_full(vault):
+                vault.deploy_roster.append(vault.current_citizen)
+            else:
+                vault.citizen_reserve.append(vault.current_citizen)
+    elif result == "extracted":
+        # Successful extraction keeps the runner active and deploy-ready.
         if target_id and not any(c.id == target_id for c in vault.deploy_roster) and vault.current_citizen:
             if not _roster_is_full(vault):
                 vault.deploy_roster.append(vault.current_citizen)

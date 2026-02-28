@@ -1,0 +1,1 @@
+                    pos_hyd+=1 if h else 0;neg_hyd+=1 if h else 0;pos_sta+=1 if s else 0;neg_sta+=1 if s else 0 

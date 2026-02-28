@@ -5,7 +5,19 @@ import pygame
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.claw_room import ClawRoom
 from bit_life_survival.app.ui.layout import split_columns, split_rows
-from bit_life_survival.app.ui.widgets import Button, Panel, ScrollList, draw_text, draw_tooltip_bar, hovered_tooltip, wrap_text
+from bit_life_survival.app.ui.overlays.tutorial import TutorialOverlay, TutorialStep
+from bit_life_survival.app.ui.widgets import (
+    Button,
+    CommandStrip,
+    Panel,
+    SectionCard,
+    StatChip,
+    clamp_wrapped_lines,
+    draw_text,
+    draw_tooltip_bar,
+    hovered_tooltip,
+    wrap_text,
+)
 from bit_life_survival.core.models import GameState
 from bit_life_survival.core.persistence import (
     citizen_queue_target,
@@ -14,14 +26,12 @@ from bit_life_survival.core.persistence import (
     refill_citizen_queue,
     select_roster_citizen_for_deploy,
     storage_used,
-    transfer_claw_pick_to_roster,
     transfer_selected_citizen_to_roster,
 )
-from bit_life_survival.core.rng import DeterministicRNG
+from bit_life_survival.core.run_director import snapshot as director_snapshot
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
-
 
 MATERIAL_IDS = ("scrap", "cloth", "plastic", "metal")
 
@@ -30,59 +40,238 @@ class BaseScene(Scene):
     def __init__(self) -> None:
         self.message = ""
         self.buttons: list[Button] = []
-        self._last_size: tuple[int, int] | None = None
         self.help_overlay = False
+        self._last_size: tuple[int, int] | None = None
+        self.active_context: str = "mission"
+        self.expand_context: bool = False
 
         self.claw_room = ClawRoom()
         self._pending_claw_target_id: str | None = None
-
-        self.gear_preview_scroll: ScrollList | None = None
-        self._gear_preview_items: list[str] = []
+        self._context_buttons: dict[str, Button] = {}
+        self._draft_button: Button | None = None
+        self._claw_button: Button | None = None
+        self._deploy_button: Button | None = None
+        self._vault_assistant: TutorialOverlay | None = None
+        self._assistant_stage: int | None = None
+        self._assistant_mode: str | None = None
 
         self._top_rect = pygame.Rect(0, 0, 0, 0)
-        self._left_rect = pygame.Rect(0, 0, 0, 0)
-        self._center_rect = pygame.Rect(0, 0, 0, 0)
-        self._right_rect = pygame.Rect(0, 0, 0, 0)
+        self._stage_rect = pygame.Rect(0, 0, 0, 0)
         self._bottom_rect = pygame.Rect(0, 0, 0, 0)
+        self._tav_chip_rect = pygame.Rect(0, 0, 0, 0)
+
         self._intake_room_rect = pygame.Rect(0, 0, 0, 0)
         self._deploy_room_rect = pygame.Rect(0, 0, 0, 0)
-        self._left_detail_rect = pygame.Rect(0, 0, 0, 0)
-        self._materials_rect = pygame.Rect(0, 0, 0, 0)
-        self._center_list_rect = pygame.Rect(0, 0, 0, 0)
-        self._right_top_rect = pygame.Rect(0, 0, 0, 0)
-        self._right_bottom_rect = pygame.Rect(0, 0, 0, 0)
+        self._selection_rect = pygame.Rect(0, 0, 0, 0)
+        self._stage_actions_rect = pygame.Rect(0, 0, 0, 0)
+        self._claw_controls_rect = pygame.Rect(0, 0, 0, 0)
+        self._context_header_rect = pygame.Rect(0, 0, 0, 0)
+
+        self._bottom_actions_rect = pygame.Rect(0, 0, 0, 0)
+        self._context_buttons_rect = pygame.Rect(0, 0, 0, 0)
+        self._context_panel_rect = pygame.Rect(0, 0, 0, 0)
+        self._status_row_rect = pygame.Rect(0, 0, 0, 0)
+        self._bottom_status_rect = pygame.Rect(0, 0, 0, 0)
+        self._bottom_tooltip_rect = pygame.Rect(0, 0, 0, 0)
+
+    @staticmethod
+    def _assistant_session_flags(app) -> set[str]:
+        flags = getattr(app, "_vault_assistant_seen", None)
+        if not isinstance(flags, set):
+            flags = set()
+            setattr(app, "_vault_assistant_seen", flags)
+        return flags
+
+    def _assistant_config(self, app) -> tuple[bool, int, bool]:
+        if not hasattr(app, "settings") or not isinstance(app.settings, dict):
+            return False, 0, True
+        gameplay = app.settings.setdefault("gameplay", {})
+        enabled = bool(gameplay.get("vault_assistant_enabled", True))
+        stage = int(gameplay.get("vault_assistant_stage", 0))
+        completed = bool(gameplay.get("vault_assistant_completed", False))
+        if bool(gameplay.get("replay_vault_assistant", False)):
+            stage = 0
+            completed = False
+            gameplay["vault_assistant_stage"] = 0
+            gameplay["vault_assistant_completed"] = False
+            gameplay["vault_assistant_tav_briefed"] = False
+            gameplay["replay_vault_assistant"] = False
+            self._assistant_session_flags(app).clear()
+            if hasattr(app, "save_settings"):
+                app.save_settings()
+        return enabled, stage, completed
+
+    def _begin_post_run_assistant(self, app) -> None:
+        if self._vault_assistant is not None:
+            return
+        if not hasattr(app, "settings") or not isinstance(app.settings, dict):
+            return
+        gameplay = app.settings.setdefault("gameplay", {})
+        if not bool(gameplay.get("vault_assistant_enabled", True)):
+            return
+        if bool(gameplay.get("vault_assistant_tav_briefed", False)):
+            return
+        if "post_run_tav" in self._assistant_session_flags(app):
+            return
+        if app.save_data is None:
+            return
+        vault = app.save_data.vault
+        if vault.run_counter < 1:
+            return
+        if float(vault.last_run_distance) <= 0.0 and int(vault.last_run_time) <= 0:
+            return
+        steps = [
+            TutorialStep(
+                title="Nice run - you gained TAV",
+                body=(
+                    "Tech Value (TAV) is your long-term progression currency. "
+                    "Every finished run adds TAV, especially deeper runs."
+                ),
+                target_rect_getter=lambda: self._tav_chip_rect,
+            ),
+            TutorialStep(
+                title="What TAV does",
+                body=(
+                    "Higher TAV unlocks new recipes, expands vault capacity, and compounds future runs. "
+                    "Push farther, extract safely, and your next run gets stronger."
+                ),
+                target_rect_getter=lambda: self._bottom_actions_rect,
+            ),
+        ]
+        self._assistant_mode = "post_run"
+        self._vault_assistant = TutorialOverlay(
+            steps,
+            series_label="Vault Assistant",
+            avoid_rect_getters=[
+                lambda: self._bottom_actions_rect,
+                lambda: self._claw_controls_rect,
+            ],
+        )
+
+    def _begin_vault_assistant(self, app) -> None:
+        if self._vault_assistant is not None:
+            return
+        enabled, stage, completed = self._assistant_config(app)
+        if not enabled or completed:
+            self._vault_assistant = None
+            self._assistant_stage = None
+            self._assistant_mode = None
+            return
+        if stage not in {0, 2}:
+            self._vault_assistant = None
+            self._assistant_stage = None
+            self._assistant_mode = None
+            return
+        stage_key = f"stage_{stage}"
+        if stage_key in self._assistant_session_flags(app):
+            return
+        if stage == 0:
+            steps = [
+                TutorialStep(
+                    title="Intake Room",
+                    body="Click an intake citizen first. This selects who the claw can grab.",
+                    target_rect_getter=lambda: self._intake_room_rect,
+                ),
+                TutorialStep(
+                    title="Claw Controls",
+                    body="Use Draft Selected for instant transfer, or Use The Claw for animated transfer.",
+                    target_rect_getter=lambda: self._claw_controls_rect,
+                ),
+                TutorialStep(
+                    title="Command Row",
+                    body="Operations is for gear/crafting. Deploy starts a run when an active runner is ready.",
+                    target_rect_getter=lambda: self._bottom_actions_rect,
+                ),
+            ]
+        else:
+            steps = [
+                TutorialStep(
+                    title="Mission Context",
+                    body="Mission card tells you the current objective and what to do next.",
+                    target_rect_getter=lambda: self._context_panel_rect,
+                ),
+                TutorialStep(
+                    title="Runner Snapshot",
+                    body="Runner Snapshot is quick preview only. Full loadout edits stay in Operations.",
+                    target_rect_getter=lambda: self._context_buttons_rect,
+                ),
+                TutorialStep(
+                    title="Run Loop",
+                    body="Draft, gear up, deploy, recover, unlock blueprints, then push farther next run.",
+                    target_rect_getter=lambda: self._bottom_actions_rect,
+                ),
+            ]
+        self._assistant_stage = stage
+        self._assistant_mode = "stage"
+        label = "Vault Assistant (Run 1/3)" if stage == 0 else "Vault Assistant (Run 3/3)"
+        self._vault_assistant = TutorialOverlay(
+            steps,
+            series_label=label,
+            avoid_rect_getters=[
+                lambda: self._bottom_actions_rect,
+                lambda: self._claw_controls_rect,
+            ],
+        )
+
+    def _finish_assistant_stage(self, app, skipped: bool = False) -> None:
+        if self._assistant_mode is None:
+            return
+        if not hasattr(app, "settings") or not isinstance(app.settings, dict):
+            self._assistant_stage = None
+            self._vault_assistant = None
+            self._assistant_mode = None
+            return
+        gameplay = app.settings.setdefault("gameplay", {})
+        flags = self._assistant_session_flags(app)
+        if self._assistant_mode == "post_run":
+            gameplay["vault_assistant_tav_briefed"] = True
+            flags.add("post_run_tav")
+        else:
+            if self._assistant_stage is None:
+                return
+            if skipped:
+                gameplay["vault_assistant_completed"] = True
+                gameplay["vault_assistant_stage"] = 3
+            else:
+                next_stage = min(3, int(self._assistant_stage) + 1)
+                gameplay["vault_assistant_stage"] = next_stage
+                gameplay["vault_assistant_completed"] = next_stage >= 3
+            flags.add(f"stage_{int(self._assistant_stage)}")
+        if hasattr(app, "save_settings"):
+            app.save_settings()
+        self._assistant_stage = None
+        self._assistant_mode = None
+        self._vault_assistant = None
+
+    def on_enter(self, app) -> None:
+        self._build_layout(app)
+        self._begin_post_run_assistant(app)
+        self._begin_vault_assistant(app)
 
     def _active_citizen(self, app):
         return get_active_deploy_citizen(app.save_data.vault)
-
-    def _predict_claw_target_id(self, app) -> str | None:
-        queue = app.save_data.vault.citizen_queue
-        if not queue:
-            return None
-        vault = app.save_data.vault
-        rng = DeterministicRNG(seed=vault.settings.base_seed, state=vault.claw_rng_state, calls=vault.claw_rng_calls)
-        window = min(5, len(queue))
-        idx = rng.next_int(0, max(1, window))
-        return queue[idx].id
 
     def _start_claw_transfer(self, app) -> None:
         if self.claw_room.is_animating:
             self.message = "Claw is already moving."
             return
         if len(app.save_data.vault.deploy_roster) >= app.save_data.vault.deploy_roster_capacity:
-            self.message = "Deploy room is full. Deploy or lose a citizen before drafting more."
+            self.message = "Deploy room is full."
             return
-        target_id = self._predict_claw_target_id(app)
+        target_id = self.claw_room.selected_intake_id
         if not target_id:
-            self.message = "No citizens waiting in intake."
+            self.message = "Select an intake citizen before using the claw."
             return
         if self.claw_room.start_grab(target_id):
             self._pending_claw_target_id = target_id
-            self.message = "Claw engaged: moving citizen to deploy room..."
+            self.message = "Claw engaged."
 
     def _finalize_claw_transfer(self, app, expected_id: str | None) -> None:
+        if not expected_id:
+            self.message = "Claw target missing."
+            return
         try:
-            citizen = transfer_claw_pick_to_roster(app.save_data.vault, preview_count=5, expected_citizen_id=expected_id)
+            citizen = transfer_selected_citizen_to_roster(app.save_data.vault, expected_id)
         except ValueError as exc:
             self.message = str(exc)
             return
@@ -98,7 +287,7 @@ class BaseScene(Scene):
             return
         selected_id = self.claw_room.selected_intake_id
         if not selected_id:
-            self.message = "Select a citizen in the intake room first."
+            self.message = "Select intake citizen first."
             return
         try:
             citizen = transfer_selected_citizen_to_roster(app.save_data.vault, selected_id)
@@ -110,21 +299,10 @@ class BaseScene(Scene):
         app.save_current_slot()
         self.message = f"Moved {citizen.name} to deploy room."
 
-    def _open_storage(self, app) -> None:
-        from .storage import StorageScene
+    def _open_operations(self, app, initial_tab: str = "loadout") -> None:
+        from .operations import OperationsScene
 
-        app.change_scene(StorageScene())
-
-    def _open_loadout(self, app) -> None:
-        active = self._active_citizen(app)
-        if active is None:
-            self.message = "Draft at least one citizen into deploy room first."
-            return
-        from .loadout import LoadoutScene
-
-        app.current_loadout = active.loadout.model_copy(deep=True)
-        app.save_data.vault.current_citizen = active
-        app.change_scene(LoadoutScene())
+        app.change_scene(OperationsScene(initial_tab=initial_tab))
 
     def _open_settings(self, app) -> None:
         from .settings import SettingsScene
@@ -137,10 +315,15 @@ class BaseScene(Scene):
 
         app.change_scene(MainMenuScene())
 
+    def _open_drone_bay(self, app) -> None:
+        from .drone_bay import DroneBayScene
+
+        app.change_scene(DroneBayScene())
+
     def _deploy(self, app) -> None:
         active = self._active_citizen(app)
         if active is None:
-            self.message = "No deploy-ready citizen. Use The Claw first."
+            self.message = "No deploy-ready citizen. Use the claw first."
             return
         app.save_data.vault.current_citizen = active
         app.current_loadout = active.loadout.model_copy(deep=True)
@@ -161,22 +344,9 @@ class BaseScene(Scene):
                 return
             app.current_loadout = citizen.loadout.model_copy(deep=True)
             app.save_current_slot()
-            self.message = f"Selected {citizen.name} for next deploy."
+            self.message = f"Selected {citizen.name}."
         else:
-            self.message = "Intake citizen selected. Move them with Draft Selected or Use The Claw."
-
-    def _refresh_gear_preview(self, app) -> None:
-        rows: list[str] = []
-        for item_id, qty in sorted(app.save_data.vault.storage.items()):
-            if qty <= 0:
-                continue
-            item = app.content.item_by_id.get(item_id)
-            if not item:
-                continue
-            rows.append(f"{item.name}  x{qty}")
-        self._gear_preview_items = rows
-        if self.gear_preview_scroll:
-            self.gear_preview_scroll.set_items(rows)
+            self.message = "Intake citizen selected."
 
     def _story_status(self, app) -> tuple[str, list[str], str]:
         vault = app.save_data.vault
@@ -185,92 +355,125 @@ class BaseScene(Scene):
         if vault.run_counter < 1:
             title = "Chapter 1: Seal and Scout"
             lines = [
-                "You sealed the vault and activated the claw intake.",
-                "Draft one citizen into Deploy Room, equip gear, and launch a first run.",
-                "Every run raises Tech Value (TAV), which unlocks capacity and upgrades.",
+                "Draft one citizen, equip gear, and launch your first run.",
+                "Each run raises Tech Value and unlocks growth.",
             ]
-            objective = "Objective: finish your first run and recover any loot."
+            objective = "Finish your first run and recover any loot."
         elif vault.tav < 40:
             title = "Chapter 2: Stabilize the Grid"
             lines = [
-                "Power relays remain unstable.",
-                "Salvage and successful recoveries increase Tech Value quickly.",
-                "Higher Tech Value expands queue/roster capacity.",
+                "Runs and recoveries raise Tech Value quickly.",
+                "Higher TAV expands intake and deploy capacity.",
             ]
-            objective = f"Objective: reach Tech Value 40 (current {vault.tav})."
+            objective = f"Reach TAV 40 (current {vault.tav})."
         else:
             title = "Chapter 3: Sustain the Vault"
             lines = [
-                "Roster management now matters more than a single hero run.",
-                "Rotate citizens, tune loadouts, and avoid unnecessary deaths.",
-                "Drone Bay upgrades reduce losses on bad outcomes.",
+                "Manage roster rotation and keep losses low.",
+                "Drone upgrades improve bad-run recovery.",
             ]
-            objective = "Objective: grow capacity and maintain stable expedition tempo."
-        cap_line = f"Intake {len(vault.citizen_queue)}/{queue_cap} | Deploy Room {len(vault.deploy_roster)}/{roster_cap}"
-        return title, lines, f"{objective}  {cap_line}"
+            objective = "Maintain expedition tempo and upgrade steadily."
+        cap_line = f"Intake {len(vault.citizen_queue)}/{queue_cap} | Deploy {len(vault.deploy_roster)}/{roster_cap}"
+        return title, lines, f"{objective} {cap_line}"
 
     def _build_layout(self, app) -> None:
         if self._last_size == app.screen.get_size() and self.buttons:
             return
         self._last_size = app.screen.get_size()
         self.buttons = []
-        self.gear_preview_scroll = None
+        self._context_buttons.clear()
+        self._draft_button = None
+        self._claw_button = None
+        self._deploy_button = None
 
         root = app.screen.get_rect().inflate(-16, -16)
-        top, body, bottom = split_rows(root, [0.15, 0.73, 0.12], gap=8)
-        left, center, right = split_columns(body, [0.34, 0.36, 0.30], gap=8)
-        self._top_rect, self._left_rect, self._center_rect, self._right_rect, self._bottom_rect = top, left, center, right, bottom
+        self._top_rect, self._stage_rect, self._bottom_rect = split_rows(root, [0.12, 0.60, 0.28], gap=8)
 
-        left_inner = pygame.Rect(left.left + 10, left.top + 36, left.width - 20, left.height - 46)
-        room_rows = split_rows(left_inner, [0.45, 0.31, 0.14, 0.10], gap=8)
-        self._intake_room_rect, self._deploy_room_rect, self._left_detail_rect, action_row = room_rows
-        action_cols = split_columns(action_row, [1, 1], gap=8)
-        self.buttons.append(
-            Button(
-                action_cols[0],
-                "Draft Selected",
-                hotkey=pygame.K_RETURN,
-                on_click=lambda: self._draft_selected_intake(app),
-                tooltip="Move selected intake citizen into Deploy Room.",
+        stage_inner = pygame.Rect(self._stage_rect.left + 10, self._stage_rect.top + 36, self._stage_rect.width - 20, self._stage_rect.height - 46)
+        room_row, control_row = split_rows(stage_inner, [0.72, 0.28], gap=8)
+        self._selection_rect, self._claw_controls_rect = split_rows(control_row, [0.52, 0.48], gap=8)
+        self._stage_actions_rect = self._claw_controls_rect
+        self._intake_room_rect, self._deploy_room_rect = split_columns(room_row, [1, 1], gap=10)
+
+        stage_action_rows = split_columns(self._claw_controls_rect, [1, 1], gap=8)
+        self._draft_button = Button(
+            stage_action_rows[0],
+            "Draft Selected",
+            hotkey=pygame.K_RETURN,
+            on_click=lambda: self._draft_selected_intake(app),
+            skin_key="draft_selected",
+            tooltip="Move selected intake citizen to deploy room.",
+            skin_render_mode="frame_text",
+            max_font_role="section",
+        )
+        self._claw_button = Button(
+            stage_action_rows[1],
+            "Use The Claw",
+            hotkey=pygame.K_u,
+            on_click=lambda: self._start_claw_transfer(app),
+            skin_key="use_the_claw",
+            tooltip="Use claw on the selected intake citizen.",
+            skin_render_mode="frame_text",
+            max_font_role="section",
+        )
+        self.buttons.append(self._draft_button)
+        self.buttons.append(self._claw_button)
+
+        bottom_inner = pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top + 8, self._bottom_rect.width - 16, self._bottom_rect.height - 16)
+        row_gap = 6
+        available_h = max(0, bottom_inner.height - (row_gap * 3))
+        action_h = max(44, int(available_h * 0.21))
+        context_btn_h = max(24, int(available_h * 0.12))
+        status_h = max(22, int(available_h * 0.12))
+        context_h = available_h - action_h - context_btn_h - status_h
+        min_context_h = 122
+        if context_h < min_context_h:
+            deficit = min_context_h - context_h
+            shave = min(deficit, max(0, action_h - 44))
+            action_h -= shave
+            deficit -= shave
+            shave = min(deficit, max(0, context_btn_h - 24))
+            context_btn_h -= shave
+            deficit -= shave
+            shave = min(deficit, max(0, status_h - 22))
+            status_h -= shave
+            context_h = available_h - action_h - context_btn_h - status_h
+
+        y = bottom_inner.top
+        self._bottom_actions_rect = pygame.Rect(bottom_inner.left, y, bottom_inner.width, action_h)
+        y = self._bottom_actions_rect.bottom + row_gap
+        self._context_buttons_rect = pygame.Rect(bottom_inner.left, y, bottom_inner.width, context_btn_h)
+        y = self._context_buttons_rect.bottom + row_gap
+        self._context_panel_rect = pygame.Rect(bottom_inner.left, y, bottom_inner.width, max(0, context_h))
+        y = self._context_panel_rect.bottom + row_gap
+        self._status_row_rect = pygame.Rect(bottom_inner.left, y, bottom_inner.width, status_h)
+        self._bottom_status_rect, self._bottom_tooltip_rect = split_columns(self._status_row_rect, [0.6, 0.4], gap=8)
+
+        action_cols = split_columns(self._bottom_actions_rect, [1, 1, 1, 1, 1], gap=8)
+        action_buttons = [
+            Button(action_cols[0], "Operations", hotkey=pygame.K_l, on_click=lambda: self._open_operations(app, "loadout"), skin_key="loadout", tooltip="Open operations hub.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), skin_key="deploy", tooltip="Launch briefing and run.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[2], "Drone Bay", hotkey=pygame.K_b, on_click=lambda: self._open_drone_bay(app), skin_key="drone_bay", tooltip="Open drone upgrades.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[3], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), skin_key="settings", tooltip="Video and gameplay settings.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[4], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._open_menu(app), skin_key="main_menu", tooltip="Return to main menu.", skin_render_mode="frame_text", max_font_role="section"),
+        ]
+        self._deploy_button = action_buttons[1]
+        self.buttons.extend(action_buttons)
+
+        context_cols = split_columns(self._context_buttons_rect, [1, 1, 1], gap=8)
+        for key, label in [("mission", "Mission"), ("snapshot", "Runner Snapshot"), ("vault", "Vault")]:
+            rect = context_cols[len(self._context_buttons)]
+            button = Button(
+                rect,
+                label,
+                on_click=lambda k=key: setattr(self, "active_context", k),
+                skin_key=key,
+                tooltip=f"Show {label.lower()} context.",
+                skin_render_mode="frame_text",
+                max_font_role="section",
             )
-        )
-        self.buttons.append(
-            Button(
-                action_cols[1],
-                "Use The Claw",
-                hotkey=pygame.K_u,
-                on_click=lambda: self._start_claw_transfer(app),
-                tooltip="Deterministic claw pick from intake queue to Deploy Room.",
-            )
-        )
-
-        center_inner = pygame.Rect(center.left + 10, center.top + 36, center.width - 20, center.height - 46)
-        module_row, material_row, hint_row, list_row = split_rows(center_inner, [0.12, 0.13, 0.08, 0.67], gap=8)
-        self._materials_rect = material_row
-        self._center_list_rect = list_row
-
-        module_cols = split_columns(module_row, [1, 1, 1], gap=8)
-        self.buttons.append(Button(module_cols[0], "Open Storage", on_click=lambda: self._open_storage(app), tooltip="Open dedicated storage scene."))
-        self.buttons.append(Button(module_cols[1], "Crafting", on_click=lambda: setattr(self, "message", "Crafting panel coming next pass."), tooltip="Crafting module overview."))
-        self.buttons.append(Button(module_cols[2], "Drone Bay", on_click=lambda: setattr(self, "message", "Drone Bay upgrades are managed from Settings/Progression."), tooltip="Drone recovery systems and upgrades."))
-        self._center_hint_rect = hint_row
-
-        self.gear_preview_scroll = ScrollList(list_row, row_height=30)
-        self._refresh_gear_preview(app)
-
-        right_inner = pygame.Rect(right.left + 10, right.top + 36, right.width - 20, right.height - 46)
-        self._right_top_rect, self._right_bottom_rect = split_rows(right_inner, [0.56, 0.44], gap=8)
-
-        bottom_cols = split_columns(pygame.Rect(bottom.left + 8, bottom.top + 8, bottom.width - 16, bottom.height - 16), [1, 1, 1, 1, 1], gap=8)
-        self.buttons.extend(
-            [
-                Button(bottom_cols[0], "Loadout", hotkey=pygame.K_l, on_click=lambda: self._open_loadout(app), tooltip="Equip the active deploy citizen."),
-                Button(bottom_cols[1], "Storage", hotkey=pygame.K_g, on_click=lambda: self._open_storage(app), tooltip="Open full storage view with filters."),
-                Button(bottom_cols[2], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), tooltip="Open pre-deploy briefing and start run."),
-                Button(bottom_cols[3], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), tooltip="Video/gameplay/audio settings."),
-                Button(bottom_cols[4], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._open_menu(app), tooltip="Return to main menu."),
-            ]
-        )
+            self._context_buttons[key] = button
+            self.buttons.append(button)
 
     def update(self, app, dt: float) -> None:
         if app.save_data is None:
@@ -278,6 +481,9 @@ class BaseScene(Scene):
         refill_citizen_queue(app.save_data.vault)
         self.claw_room.sync(app.save_data.vault.citizen_queue, app.save_data.vault.deploy_roster)
         self.claw_room.update(dt)
+        if self._vault_assistant is None:
+            self._begin_post_run_assistant(app)
+            self._begin_vault_assistant(app)
         finished_target = self.claw_room.consume_finished_target()
         if finished_target is not None:
             self._finalize_claw_transfer(app, expected_id=finished_target)
@@ -287,12 +493,26 @@ class BaseScene(Scene):
             app.quit()
             return
         self._build_layout(app)
+        if self._vault_assistant and self._vault_assistant.visible:
+            result = self._vault_assistant.handle_event(event)
+            if result == "done":
+                self._finish_assistant_stage(app, skipped=False)
+            elif result == "skip":
+                self._finish_assistant_stage(app, skipped=True)
+            return
         if self.help_overlay:
             if event.type in {pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN}:
                 self.help_overlay = False
             return
         if event.type == pygame.KEYDOWN and event.key == pygame.K_h:
             self.help_overlay = True
+            return
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_TAB:
+            self.expand_context = not self.expand_context
+            return
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._context_header_rect.collidepoint(event.pos):
+            self.expand_context = not self.expand_context
             return
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -302,8 +522,6 @@ class BaseScene(Scene):
                     self._set_active_from_room_click(app, picked[0], picked[1])
                 return
 
-        if self.gear_preview_scroll and self.gear_preview_scroll.handle_event(event):
-            return
         for button in self.buttons:
             if button.handle_event(event):
                 self._last_size = None
@@ -312,117 +530,124 @@ class BaseScene(Scene):
     def _draw_top_bar(self, app, surface: pygame.Surface) -> None:
         vault = app.save_data.vault
         used = storage_used(vault)
-        line = (
-            f"Vault Lv {vault.vault_level}    "
-            f"Tech Value (TAV) {vault.tav}    "
-            f"Drone Bay {int(vault.upgrades.get('drone_bay_level', 0))}    "
-            f"Storage Used {used}"
-        )
-        draw_text(surface, line, theme.get_font(22, bold=True), theme.COLOR_TEXT, (self._top_rect.left + 14, self._top_rect.top + 52))
+        chips_rect = pygame.Rect(self._top_rect.left + 8, self._top_rect.top + 30, self._top_rect.width - 16, self._top_rect.height - 36)
+        chips = split_columns(chips_rect, [1, 1, 1, 1], gap=8)
+        self._tav_chip_rect = chips[1].copy()
+        StatChip(chips[0], "Vault Lv", str(vault.vault_level)).draw(surface)
+        StatChip(chips[1], "TAV", str(vault.tav)).draw(surface)
+        StatChip(chips[2], "Drone Bay", str(int(vault.upgrades.get("drone_bay_level", 0)))).draw(surface)
+        StatChip(chips[3], "Storage", str(used)).draw(surface)
 
-    def _draw_materials_row(self, app, surface: pygame.Surface) -> None:
-        draw_text(surface, "Materials Pouch", theme.get_font(15, bold=True), theme.COLOR_TEXT_MUTED, (self._materials_rect.left + 2, self._materials_rect.top + 2))
-        row = pygame.Rect(self._materials_rect.left, self._materials_rect.top + 20, self._materials_rect.width, self._materials_rect.height - 20)
-        cols = split_columns(row, [1, 1, 1, 1], gap=8)
-        for col, mid in zip(cols, MATERIAL_IDS):
-            pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, col, border_radius=2)
-            pygame.draw.rect(surface, theme.COLOR_BORDER, col, width=2, border_radius=2)
-            draw_text(
-                surface,
-                f"{mid.title()} {app.save_data.vault.materials.get(mid, 0)}",
-                theme.get_font(15, bold=True),
-                theme.COLOR_TEXT,
-                col.center,
-                "center",
+    def _draw_selection_strip(self, app, surface: pygame.Surface) -> None:
+        left, center, right = split_columns(self._selection_rect, [1, 1, 1], gap=8)
+        intake_body = SectionCard(left, "Intake Selection").draw(surface)
+        active_body = SectionCard(center, "Active Runner").draw(surface)
+        deploy_body = SectionCard(right, "Deploy Selection").draw(surface)
+
+        intake_sel = self.claw_room.selected_intake_id or "-"
+        deploy_sel = self.claw_room.selected_roster_id or "-"
+        active = self._active_citizen(app)
+
+        draw_text(surface, intake_sel, theme.get_font(theme.FONT_SIZE_BODY), theme.COLOR_TEXT, (intake_body.left, intake_body.top))
+        draw_text(surface, active.name if active else "-", theme.get_font(theme.FONT_SIZE_BODY, bold=True), theme.COLOR_SUCCESS if active else theme.COLOR_TEXT_MUTED, (active_body.left, active_body.top))
+        draw_text(surface, deploy_sel, theme.get_font(theme.FONT_SIZE_BODY), theme.COLOR_TEXT_MUTED, (deploy_body.left, deploy_body.top))
+
+    def _draw_context_panel(self, app, surface: pygame.Surface) -> None:
+        title_lookup = {"mission": "Mission Command", "snapshot": "Runner Snapshot", "vault": "Vault Metrics"}
+        body = SectionCard(self._context_panel_rect, title_lookup.get(self.active_context, "Context")).draw(surface)
+        self._context_header_rect = pygame.Rect(self._context_panel_rect.left + 2, self._context_panel_rect.top + 2, self._context_panel_rect.width - 4, 22)
+        x = body.left
+        y = body.top
+        bottom = body.bottom
+        clipped = False
+
+        def _draw_block(text: str, font: pygame.font.Font, color: tuple[int, int, int], spacing: int = 2) -> None:
+            nonlocal y, clipped
+            if y >= bottom:
+                clipped = True
+                return
+            remaining = max(0, bottom - y)
+            if self.expand_context:
+                lines = wrap_text(text, font, body.width)
+                was_clipped = False
+            else:
+                lines, was_clipped = clamp_wrapped_lines(text, font, body.width, remaining, line_spacing=spacing)
+            for line in lines:
+                if y + font.get_linesize() > bottom:
+                    clipped = True
+                    return
+                draw_text(surface, line, font, color, (x, y))
+                y += font.get_linesize() + spacing
+            clipped = clipped or was_clipped
+
+        if self.active_context == "mission":
+            chapter, lines, objective = self._story_status(app)
+            next_seed = app.compute_run_seed() if hasattr(app, "compute_run_seed") else 0
+            profile = director_snapshot(0.0, 0, next_seed)
+            draw_text(surface, chapter, theme.get_font(theme.FONT_SIZE_SECTION, bold=True, kind="display"), theme.COLOR_TEXT, (x, y))
+            y += theme.get_font(theme.FONT_SIZE_SECTION, bold=True, kind="display").get_linesize() + 2
+            for line in lines:
+                _draw_block(line, theme.get_font(theme.FONT_SIZE_BODY), theme.COLOR_TEXT_MUTED)
+            _draw_block(objective, theme.get_font(theme.FONT_SIZE_META), theme.COLOR_WARNING)
+            _draw_block(f"Next Run Profile: {profile.profile_name}", theme.get_font(theme.FONT_SIZE_META, bold=True), theme.COLOR_TEXT)
+            _draw_block(profile.profile_blurb, theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED)
+            if clipped and not self.expand_context:
+                hint_y = max(body.top, body.bottom - theme.get_font(theme.FONT_SIZE_META).get_linesize())
+                draw_text(surface, "Tab: expand context", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED, (x, hint_y))
+            return
+
+        if self.active_context == "snapshot":
+            preview_state = GameState(
+                seed=0,
+                biome_id="suburbs",
+                rng_state=1,
+                rng_calls=0,
+                equipped=app.current_loadout.model_copy(deep=True),
             )
+            summary = compute_loadout_summary(preview_state, app.content)
+            cols = split_columns(pygame.Rect(x, y, body.width, 28), [1, 1, 1], gap=8)
+            StatChip(cols[0], "Speed", f"{summary['speed_bonus']:+.2f}").draw(surface)
+            StatChip(cols[1], "Carry", f"{summary['carry_bonus']:+.1f}").draw(surface)
+            StatChip(cols[2], "InjuryRes", f"{summary['injury_resist']*100:.0f}%").draw(surface)
+            y += 34
+            for slot_name, item_id in app.current_loadout.model_dump(mode="python").items():
+                _draw_block(f"{slot_name}: {item_id or '-'}", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT)
+            tags = ", ".join(summary["tags"]) if summary["tags"] else "-"
+            _draw_block(f"Tags: {tags}", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED)
+            if clipped and not self.expand_context:
+                hint_y = max(body.top, body.bottom - theme.get_font(theme.FONT_SIZE_META).get_linesize())
+                draw_text(surface, "Tab: expand context", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED, (x, hint_y))
+            return
 
-    def _draw_left_detail(self, app, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._left_detail_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self._left_detail_rect, width=2, border_radius=2)
-        active = self._active_citizen(app)
-        y = self._left_detail_rect.top + 8
-        draw_text(surface, "Deploy Selection", theme.get_font(15, bold=True), theme.COLOR_TEXT, (self._left_detail_rect.left + 8, y))
-        y += 18
-        if active:
-            draw_text(surface, f"{active.name}", theme.get_font(15, bold=True), theme.COLOR_SUCCESS, (self._left_detail_rect.left + 8, y))
-            y += 16
-            for line in wrap_text(active.quirk, theme.get_font(12), self._left_detail_rect.width - 16)[:2]:
-                draw_text(surface, line, theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._left_detail_rect.left + 8, y))
-                y += 14
-        else:
-            draw_text(surface, "No deploy citizen selected.", theme.get_font(12), theme.COLOR_WARNING, (self._left_detail_rect.left + 8, y))
-
-    def _draw_center_panel(self, app, surface: pygame.Surface) -> None:
-        self._draw_materials_row(app, surface)
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._center_hint_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self._center_hint_rect, width=1, border_radius=2)
-        draw_text(
-            surface,
-            "Gear storage preview (full management in Storage screen).",
-            theme.get_font(13),
-            theme.COLOR_TEXT_MUTED,
-            (self._center_hint_rect.left + 8, self._center_hint_rect.centery),
-            "midleft",
-        )
-        if self.gear_preview_scroll:
-            self.gear_preview_scroll.draw(surface)
-
-    def _draw_right_panel(self, app, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._right_top_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self._right_top_rect, width=2, border_radius=2)
-        chapter, lines, objective = self._story_status(app)
-        y = self._right_top_rect.top + 8
-        draw_text(surface, chapter, theme.get_font(18, bold=True), theme.COLOR_TEXT, (self._right_top_rect.left + 8, y))
-        y += 24
-        for line in lines:
-            for wrapped in wrap_text(line, theme.get_font(13), self._right_top_rect.width - 16):
-                draw_text(surface, wrapped, theme.get_font(13), theme.COLOR_TEXT_MUTED, (self._right_top_rect.left + 8, y))
-                y += 16
-            y += 2
-        y += 4
-        draw_text(surface, "What To Do Next", theme.get_font(18, bold=True), theme.COLOR_TEXT, (self._right_top_rect.left + 8, y))
-        y += 22
-        active = self._active_citizen(app)
-        has_loadout = any(bool(v) for v in app.current_loadout.model_dump(mode="python").values())
-        steps = [
-            ("Move intake citizen into Deploy Room", bool(app.save_data.vault.deploy_roster)),
-            ("Select a deploy citizen", active is not None),
-            ("Open Loadout and equip gear", has_loadout),
-            ("Press Deploy to start run", active is not None),
+        vault = app.save_data.vault
+        cols = split_columns(pygame.Rect(x, y, body.width, 28), [1, 1], gap=8)
+        StatChip(cols[0], "TAV", str(vault.tav)).draw(surface)
+        StatChip(cols[1], "Vault Level", str(vault.vault_level)).draw(surface)
+        y += 34
+        for material_id in MATERIAL_IDS:
+            qty = int(vault.materials.get(material_id, 0))
+            _draw_block(f"{material_id.title()}: {qty}", theme.get_font(theme.FONT_SIZE_BODY), theme.COLOR_TEXT_MUTED)
+        queue_cap = citizen_queue_target(vault)
+        roster_cap = compute_roster_capacity(vault)
+        _draw_block(f"Intake {len(vault.citizen_queue)}/{queue_cap}", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT)
+        _draw_block(f"Deploy {len(vault.deploy_roster)}/{roster_cap}", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT)
+        locked_by_tav = [
+            recipe
+            for recipe in sorted(app.content.recipes, key=lambda r: (r.unlock_tav or 9999, r.name))
+            if recipe.id not in vault.blueprints
         ]
-        for step_text, done in steps:
-            prefix = "[OK]" if done else "[  ]"
-            color = theme.COLOR_SUCCESS if done else theme.COLOR_TEXT
-            draw_text(surface, f"{prefix} {step_text}", theme.get_font(14, bold=done), color, (self._right_top_rect.left + 8, y))
-            y += 18
-        draw_text(surface, objective, theme.get_font(12), theme.COLOR_WARNING, (self._right_top_rect.left + 8, self._right_top_rect.bottom - 14))
-
-        pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, self._right_bottom_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self._right_bottom_rect, width=2, border_radius=2)
-        draw_text(surface, "Loadout Preview", theme.get_font(17, bold=True), theme.COLOR_TEXT, (self._right_bottom_rect.left + 8, self._right_bottom_rect.top + 8))
-        preview_state = GameState(
-            seed=0,
-            biome_id="suburbs",
-            rng_state=1,
-            rng_calls=0,
-            equipped=app.current_loadout.model_copy(deep=True),
-        )
-        summary = compute_loadout_summary(preview_state, app.content)
-        y = self._right_bottom_rect.top + 30
-        for slot_name, item_id in app.current_loadout.model_dump(mode="python").items():
-            draw_text(surface, f"{slot_name}: {item_id or '-'}", theme.get_font(12), theme.COLOR_TEXT_MUTED, (self._right_bottom_rect.left + 8, y))
-            y += 14
-        y += 2
-        tags = ", ".join(summary["tags"]) if summary["tags"] else "-"
-        draw_text(surface, f"Tags: {tags}", theme.get_font(12), theme.COLOR_TEXT, (self._right_bottom_rect.left + 8, y))
-        y += 14
-        draw_text(
-            surface,
-            f"Speed {summary['speed_bonus']:+.2f}  Carry {summary['carry_bonus']:+.1f}",
-            theme.get_font(12),
-            theme.COLOR_TEXT_MUTED,
-            (self._right_bottom_rect.left + 8, y),
-        )
+        if locked_by_tav:
+            next_recipe = locked_by_tav[0]
+            unlock_at = next_recipe.unlock_tav if next_recipe.unlock_tav is not None else vault.tav
+            delta = max(0, int(unlock_at) - int(vault.tav))
+            _draw_block(f"Next unlock: {next_recipe.name}", theme.get_font(theme.FONT_SIZE_META, bold=True), theme.COLOR_TEXT)
+            if delta > 0:
+                _draw_block(f"TAV needed: +{delta}", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_WARNING)
+            else:
+                _draw_block("Unlocked by blueprint drop", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED)
+        if clipped and not self.expand_context:
+            hint_y = max(body.top, body.bottom - theme.get_font(theme.FONT_SIZE_META).get_linesize())
+            draw_text(surface, "Tab: expand context", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED, (x, hint_y))
 
     def render(self, app, surface: pygame.Surface) -> None:
         if app.save_data is None:
@@ -434,10 +659,8 @@ class BaseScene(Scene):
         self._build_layout(app)
         app.backgrounds.draw(surface, "vault")
         Panel(self._top_rect, title="Vault Dashboard").draw(surface)
-        Panel(self._left_rect, title="Citizen Operations").draw(surface)
-        Panel(self._center_rect, title="Vault Modules").draw(surface)
-        Panel(self._right_rect, title="Mission Context").draw(surface)
-        Panel(self._bottom_rect).draw(surface)
+        Panel(self._stage_rect, title="Citizen Operations Deck").draw(surface)
+        Panel(self._bottom_rect, title="Command Console").draw(surface)
 
         self._draw_top_bar(app, surface)
         self.claw_room.draw(
@@ -447,41 +670,84 @@ class BaseScene(Scene):
             app.save_data.vault.citizen_queue,
             app.save_data.vault.deploy_roster,
         )
-        self._draw_left_detail(app, surface)
-        self._draw_center_panel(app, surface)
-        self._draw_right_panel(app, surface)
+        self._draw_selection_strip(app, surface)
+        self._draw_context_panel(app, surface)
+
+        if self._draft_button is not None:
+            self._draft_button.enabled = (self.claw_room.selected_intake_id is not None) and (not self.claw_room.is_animating)
+        if self._claw_button is not None:
+            self._claw_button.enabled = (self.claw_room.selected_intake_id is not None) and (not self.claw_room.is_animating)
+        if self._deploy_button is not None:
+            deploy_ready = self._active_citizen(app) is not None
+            self._deploy_button.enabled = deploy_ready
+            self._deploy_button.tooltip = "Launch briefing and run." if deploy_ready else "Draft and select a deploy citizen first."
 
         mouse_pos = app.virtual_mouse_pos()
+        for key, button in self._context_buttons.items():
+            if key == self.active_context:
+                button.bg = theme.COLOR_ACCENT_SOFT
+                button.bg_hover = theme.COLOR_ACCENT
+                button.text_override_color = theme.COLOR_TEXT
+            else:
+                button.bg = theme.COLOR_PANEL_ALT
+                button.bg_hover = theme.COLOR_ACCENT_SOFT
+                button.text_override_color = None
+
+        CommandStrip(self._bottom_actions_rect, [btn for btn in self.buttons if btn.rect.colliderect(self._bottom_actions_rect)]).draw(surface, mouse_pos)
         for button in self.buttons:
+            if button.rect.colliderect(self._bottom_actions_rect):
+                continue
             button.draw(surface, mouse_pos)
 
+        status_line = self.message
+        if not status_line and self._deploy_button is not None and not self._deploy_button.enabled:
+            status_line = "Draft and select a deploy citizen to enable Deploy."
+        if status_line:
+            status_font = theme.get_font(theme.FONT_SIZE_BODY, bold=True)
+            status_lines, _ = clamp_wrapped_lines(
+                status_line,
+                status_font,
+                max(40, self._bottom_status_rect.width - 16),
+                max(14, self._bottom_status_rect.height - 4),
+                line_spacing=2,
+            )
+            if status_lines:
+                draw_text(
+                    surface,
+                    status_lines[0],
+                    status_font,
+                    theme.COLOR_WARNING,
+                    (self._bottom_status_rect.left + 8, self._bottom_status_rect.centery),
+                    "midleft",
+                )
+
         tip = hovered_tooltip(self.buttons)
-        if tip:
-            tip_rect = pygame.Rect(self._bottom_rect.left + 8, self._bottom_rect.top - 24, self._bottom_rect.width - 16, 18)
-            draw_tooltip_bar(surface, tip_rect, tip)
-        if self.message:
-            draw_text(surface, self.message, theme.get_font(15), theme.COLOR_WARNING, (self._bottom_rect.centerx, self._bottom_rect.top - 4), "midbottom")
+        if tip and app.save_data.vault.settings.show_tooltips:
+            draw_tooltip_bar(surface, self._bottom_tooltip_rect, tip)
+
         if self.help_overlay:
             self._draw_help_overlay(surface)
+        if self._vault_assistant and self._vault_assistant.visible:
+            self._vault_assistant.draw(surface)
 
     def _draw_help_overlay(self, surface: pygame.Surface) -> None:
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 175))
         surface.blit(overlay, (0, 0))
-        rect = pygame.Rect(surface.get_width() // 2 - 380, surface.get_height() // 2 - 230, 760, 460)
+        rect = pygame.Rect(surface.get_width() // 2 - 380, surface.get_height() // 2 - 220, 760, 440)
         Panel(rect, title="Base Help").draw(surface)
         lines = [
-            "Left room is intake queue. Right room is deploy roster.",
-            "Use The Claw grabs one intake citizen and transports them to deploy room.",
-            "Click a citizen in deploy room to select who will run next.",
-            "Loadout edits the selected deploy citizen's equipment.",
-            "Tech Value (TAV) is your long-term progression score from distance + recovery.",
-            "Storage button always opens the full Storage scene.",
+            "The center rooms are your intake/deploy workflow.",
+            "Use The Claw now grabs the selected intake citizen.",
+            "Mission/Snapshot/Vault tabs switch tactical context cards.",
+            "Bottom command row controls operations and navigation.",
+            "Click a deploy citizen to set the active runner.",
+            "Press Tab or click context header to expand/collapse text.",
             "Press any key or click to close.",
         ]
         y = rect.top + 54
         for line in lines:
-            for wrapped in wrap_text(line, theme.get_font(17), rect.width - 28):
-                draw_text(surface, wrapped, theme.get_font(17), theme.COLOR_TEXT, (rect.left + 14, y))
-                y += 22
-            y += 3
+            for wrapped in wrap_text(line, theme.get_font(theme.FONT_SIZE_SECTION), rect.width - 28):
+                draw_text(surface, wrapped, theme.get_font(theme.FONT_SIZE_SECTION), theme.COLOR_TEXT, (rect.left + 14, y))
+                y += theme.FONT_SIZE_SECTION + 4
+            y += 2

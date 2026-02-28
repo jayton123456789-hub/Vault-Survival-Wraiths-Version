@@ -6,6 +6,7 @@ from .loader import ContentBundle
 from .models import GameState, ItemRarity, VaultState
 from .persistence import store_item
 from .rng import DeterministicRNG
+from .run_director import snapshot as director_snapshot
 
 
 @dataclass(slots=True)
@@ -16,6 +17,7 @@ class DroneRecoveryReport:
     lost: dict[str, int]
     tav_gain: int
     milestone_awards: list[str]
+    blueprint_unlocks: list[str]
     distance_tav: int
     rare_bonus: int
     milestone_bonus: int
@@ -48,17 +50,21 @@ def _recovery_status(total: int, recovered: int) -> str:
 
 
 def _distance_tav(distance: float) -> int:
-    if distance < 15:
+    if distance < 10:
         return 2
-    if distance < 30:
+    if distance < 18:
         return 5
+    if distance < 28:
+        return 9
+    if distance < 42:
+        return 14
     if distance < 60:
-        return 10
-    if distance < 100:
-        return 16
-    if distance < 150:
-        return 24
-    return 35
+        return 22
+    if distance < 85:
+        return 31
+    if distance < 120:
+        return 42
+    return 56
 
 
 def _milestone_bonus(vault: VaultState, distance: float) -> tuple[int, list[str]]:
@@ -116,7 +122,10 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
         elif flag == "retreated_early":
             penalties += 0.08
 
+    extracted = "extracted" in state.death_flags
     recovery_chance = max(0.05, min(0.95, 0.35 + (0.12 * drone_level) + pack_bonus - penalties))
+    if extracted:
+        recovery_chance = 1.0
 
     recoverable = _collect_recoverable_items(state)
     rng = _drone_rng(state)
@@ -142,9 +151,12 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
     distance_tav = _distance_tav(state.distance)
     rare_bonus = _rare_item_bonus(recovered, content)
     milestone_bonus, milestone_awards = _milestone_bonus(vault, state.distance)
+    director = director_snapshot(state.distance, state.step, state.seed)
+    extraction_bonus = int(max(0, round(state.distance * 0.08))) if extracted else 0
     penalty_adjustment = 0
-    tav_gain = distance_tav + rare_bonus + milestone_bonus
-    if status == "lost":
+    base_gain = distance_tav + rare_bonus + milestone_bonus + extraction_bonus
+    tav_gain = max(0, int(round(base_gain * director.reward_multiplier)))
+    if status == "lost" and not extracted:
         penalty_adjustment = -3
         tav_gain = max(0, tav_gain + penalty_adjustment)
 
@@ -158,6 +170,7 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
         lost=lost,
         tav_gain=tav_gain,
         milestone_awards=milestone_awards,
+        blueprint_unlocks=[],
         distance_tav=distance_tav,
         rare_bonus=rare_bonus,
         milestone_bonus=milestone_bonus,

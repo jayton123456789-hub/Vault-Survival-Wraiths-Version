@@ -23,6 +23,7 @@ def _snapshot_state(state):
         "dead": state.dead,
         "death_reason": state.death_reason,
         "last_event_id": state.last_event_id,
+        "recent_event_ids": list(state.recent_event_ids),
         "cooldowns": sorted(state.event_cooldowns.items()),
         "rng": (state.rng_state, state.rng_calls),
     }

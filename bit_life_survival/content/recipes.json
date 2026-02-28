@@ -3,6 +3,10 @@
     "id": "field_pack_recipe",
     "name": "Field Pack",
     "description": "Balanced carry rig with triage pockets.",
+    "category": "pack",
+    "unlockTav": 0,
+    "purpose": "Increases carry and helps sustain stamina on longer runs.",
+    "tutorialUse": "First progression craft for safer mid-length expeditions.",
     "inputs": {
       "scrap": 4,
       "cloth": 3,
@@ -15,6 +19,10 @@
     "id": "patchwork_armor_recipe",
     "name": "Patchwork Armor",
     "description": "Layered plates stitched to cloth backing.",
+    "category": "armor",
+    "unlockTav": 0,
+    "purpose": "Early injury protection to survive hazard/combat events.",
+    "tutorialUse": "Craft before your first risky run for safer outcomes.",
     "inputs": {
       "scrap": 3,
       "metal": 4,
@@ -27,6 +35,10 @@
     "id": "filter_mask_recipe",
     "name": "Filter Mask",
     "description": "Basic charcoal filter and face seal.",
+    "category": "utility",
+    "unlockTav": 10,
+    "purpose": "Reduces hydration and stamina drain in toxic event chains.",
+    "tutorialUse": "Unlocks Toxic-tag options during run encounters.",
     "inputs": {
       "plastic": 4,
       "cloth": 2,
@@ -39,6 +51,10 @@
     "id": "lockpick_set_recipe",
     "name": "Lockpick Set",
     "description": "Quiet entry tools made from spring steel.",
+    "category": "utility",
+    "unlockTav": 18,
+    "purpose": "Improves stealth/access paths and lowers event risk in locked routes.",
+    "tutorialUse": "Unlocks Access/Stealth blue-option style choices.",
     "inputs": {
       "metal": 3,
       "plastic": 1
@@ -50,6 +66,10 @@
     "id": "med_armband_recipe",
     "name": "Medical Armband",
     "description": "Bandage carrier for fast stabilizing.",
+    "category": "utility",
+    "unlockTav": 26,
+    "purpose": "Provides extra injury resilience and better recovery odds.",
+    "tutorialUse": "Unlocks Medical options and supports longer survival.",
     "inputs": {
       "cloth": 4,
       "plastic": 1
@@ -61,6 +81,10 @@
     "id": "radio_parts_recipe",
     "name": "Radio Parts",
     "description": "Repaired tuning board and wiring.",
+    "category": "utility",
+    "unlockTav": 36,
+    "purpose": "Boosts morale consistency and supports signal-related choices.",
+    "tutorialUse": "Helps stabilize low-morale runs and social encounters.",
     "inputs": {
       "metal": 3,
       "plastic": 3
@@ -72,6 +96,10 @@
     "id": "repair_kit_recipe",
     "name": "Repair Kit",
     "description": "Fast patch kit for field fixes.",
+    "category": "utility",
+    "unlockTav": 48,
+    "purpose": "Improves run consistency by supporting tool/gear sustain loops.",
+    "tutorialUse": "Strong generalist craft for deep-run reliability.",
     "inputs": {
       "scrap": 2,
       "metal": 2,
@@ -84,6 +112,10 @@
     "id": "water_purifier_recipe",
     "name": "Water Purifier",
     "description": "Portable purification core for unsafe water.",
+    "category": "utility",
+    "unlockTav": 62,
+    "purpose": "High-tier hydration protection for long-distance extraction pushes.",
+    "tutorialUse": "Late-run stabilizer against dehydration-heavy routes.",
     "inputs": {
       "plastic": 5,
       "metal": 2,

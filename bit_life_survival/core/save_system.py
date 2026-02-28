@@ -171,6 +171,22 @@ def _migrate_v2_to_v3(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _migrate_v3_to_v4(payload: dict[str, Any]) -> dict[str, Any]:
+    vault = _coerce_dict(payload.get("vault"))
+    settings = _coerce_dict(vault.get("settings"))
+    settings.setdefault("theme_preset", "ember")
+    try:
+        font_scale = float(settings.get("font_scale", 1.0))
+    except (TypeError, ValueError):
+        font_scale = 1.0
+    settings["font_scale"] = max(0.75, min(1.6, font_scale))
+    settings["show_tooltips"] = bool(settings.get("show_tooltips", True))
+    vault["settings"] = settings
+    payload["vault"] = vault
+    payload["save_version"] = 4
+    return payload
+
+
 def _migrate_v0_to_v1(payload: dict[str, Any]) -> dict[str, Any]:
     if "vault" not in payload:
         payload = {"vault": payload}
@@ -196,6 +212,7 @@ MIGRATION_STEPS: dict[int, Any] = {
     0: _migrate_v0_to_v1,
     1: _migrate_v1_to_v2,
     2: _migrate_v2_to_v3,
+    3: _migrate_v3_to_v4,
 }
 
 

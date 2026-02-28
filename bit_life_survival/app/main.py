@@ -39,6 +39,7 @@ class GameApp:
         self.settings_store = SettingsStore(self.user_paths.config / "settings.json")
         self.settings = self.settings_store.load()
         self.settings["video"]["ui_theme"] = theme.apply_theme(self.settings["video"].get("ui_theme", theme.DEFAULT_THEME))
+        theme.set_font_scale(float(self.settings["video"].get("ui_scale", 1.0)))
         slot_count = int(self.settings.get("gameplay", {}).get("save_slots", 3))
         self.save_service = SaveService(self.user_paths.saves, slot_count=slot_count)
         self.audio = AudioService()
@@ -87,9 +88,18 @@ class GameApp:
         applied = theme.apply_theme(selected)
         self.settings["video"]["ui_theme"] = applied
 
+    def _sync_vault_ui_settings(self) -> None:
+        if self.save_data is None:
+            return
+        vault_settings = self.save_data.vault.settings
+        vault_settings.theme_preset = self.settings["video"].get("ui_theme", theme.DEFAULT_THEME)
+        vault_settings.font_scale = float(self.settings["video"].get("ui_scale", 1.0))
+        vault_settings.show_tooltips = bool(self.settings["gameplay"].get("show_tooltips", True))
+
     def apply_video_settings(self) -> None:
         self.apply_theme()
         video = self.settings["video"]
+        theme.set_font_scale(float(video.get("ui_scale", 1.0)))
         resolution = tuple(video.get("resolution", [1280, 720]))
         fullscreen = bool(video.get("fullscreen", False))
         flags = pygame.RESIZABLE
@@ -110,6 +120,7 @@ class GameApp:
         self.current_loadout = EquippedSlots()
         # Keep per-slot intro skip in sync with global setting.
         self.save_data.vault.settings.skip_intro = bool(self.settings["gameplay"].get("skip_intro", False))
+        self._sync_vault_ui_settings()
         self.save_current_slot()
         self.logger.info("Loaded slot %s", slot)
 
@@ -119,6 +130,7 @@ class GameApp:
         self.current_slot = slot
         self.current_loadout = EquippedSlots()
         self.save_data.vault.settings.skip_intro = bool(self.settings["gameplay"].get("skip_intro", False))
+        self._sync_vault_ui_settings()
         self.save_current_slot()
         self.logger.info("Created new game in slot %s", slot)
 
@@ -196,6 +208,9 @@ class GameApp:
             dt = self.clock.tick(60) / 1000.0
             try:
                 for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        self.quit()
+                        continue
                     if event.type == pygame.WINDOWRESIZED:
                         self.pixel_renderer.set_window_size((event.x, event.y))
                     if self.scene is not None:

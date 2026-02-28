@@ -3,7 +3,7 @@
 ## Scope
 Playable pygame desktop loop:
 
-`Main Menu -> Base -> Loadout -> Briefing -> Run -> Death/Retreat -> Drone Recovery -> Base`
+`Main Menu -> Base -> Operations Hub -> Briefing -> Run -> Death/Retreat -> Drone Recovery -> Base`
 
 Python-only, data-driven content from `bit_life_survival/content/*.json`.
 
@@ -61,8 +61,8 @@ Autopick policies:
 - Mouse input is remapped from window space into virtual-canvas space.
 
 ## Controls
-- Base: `U` claw draft, `Enter` draft selected, `L` loadout, `D` deploy, `S` settings, `H` help.
-- Loadout: click to equip, `B` equip best, `A` equip all, `D` deploy, `H` help, `Esc` back.
+- Base: `U` claw draft, `Enter` draft selected, `L` operations hub, `D` deploy, `B` drone bay, `S` settings, `H` help.
+- Operations Hub: top tabs `Loadout / Inventory / Storage / Crafting`, `B` equip best, `A` equip all, `D` deploy, `Esc` back.
 - Run: `C` continue, `L` log toggle, `R` retreat, `E` use aid, `Q` quit, `H` help.
 - Event modal: `1-4` choose option, `R` retreat, `Q` quit, `H` help.
 

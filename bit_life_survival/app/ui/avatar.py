@@ -10,6 +10,9 @@ import pygame
 from . import theme
 from .widgets import draw_text
 
+GAMEPLAY_SOURCE_SIZE = 128
+PORTRAIT_SOURCE_SIZE = 256
+
 
 def _shade(color: tuple[int, int, int], delta: int) -> tuple[int, int, int]:
     return (
@@ -24,34 +27,46 @@ class CitizenPalette:
     outline: tuple[int, int, int]
     skin: tuple[int, int, int]
     skin_shadow: tuple[int, int, int]
-    shirt: tuple[int, int, int]
-    shirt_shadow: tuple[int, int, int]
-    shirt_highlight: tuple[int, int, int]
-    pants: tuple[int, int, int]
-    pants_shadow: tuple[int, int, int]
     hair: tuple[int, int, int]
     hair_shadow: tuple[int, int, int]
+    jacket: tuple[int, int, int]
+    jacket_shadow: tuple[int, int, int]
+    jacket_highlight: tuple[int, int, int]
+    pants: tuple[int, int, int]
+    pants_shadow: tuple[int, int, int]
+    boot: tuple[int, int, int]
+    strap: tuple[int, int, int]
     gear: tuple[int, int, int]
+    glow: tuple[int, int, int]
+
+
+def _digest(citizen_id: str) -> bytes:
+    return hashlib.sha256(citizen_id.encode("utf-8")).digest()
 
 
 def _build_palette(citizen_id: str) -> CitizenPalette:
-    digest = hashlib.sha256(citizen_id.encode("utf-8")).digest()
-    skin = (148 + digest[0] % 56, 114 + digest[1] % 42, 96 + digest[2] % 36)
-    shirt = (74 + digest[3] % 110, 72 + digest[4] % 96, 84 + digest[5] % 100)
-    hair = (28 + digest[6] % 90, 22 + digest[7] % 74, 16 + digest[8] % 58)
-    gear = (96 + digest[9] % 80, 114 + digest[10] % 88, 86 + digest[11] % 74)
+    seed = _digest(citizen_id)
+    skin = (178 + seed[0] % 44, 138 + seed[1] % 42, 116 + seed[2] % 34)
+    hair = (42 + seed[3] % 92, 28 + seed[4] % 68, 24 + seed[5] % 58)
+    jacket = (66 + seed[6] % 86, 84 + seed[7] % 92, 110 + seed[8] % 96)
+    pants = (56 + seed[9] % 72, 70 + seed[10] % 78, 92 + seed[11] % 88)
+    gear = (82 + seed[12] % 76, 74 + seed[13] % 66, 60 + seed[14] % 54)
+    glow = (230, 194 + seed[15] % 40, 124 + seed[16] % 44)
     return CitizenPalette(
-        outline=(22, 14, 30),
+        outline=(18, 14, 18),
         skin=skin,
-        skin_shadow=_shade(skin, -30),
-        shirt=shirt,
-        shirt_shadow=_shade(shirt, -34),
-        shirt_highlight=_shade(shirt, +28),
-        pants=_shade(shirt, -18),
-        pants_shadow=_shade(shirt, -44),
+        skin_shadow=_shade(skin, -28),
         hair=hair,
         hair_shadow=_shade(hair, -24),
+        jacket=jacket,
+        jacket_shadow=_shade(jacket, -34),
+        jacket_highlight=_shade(jacket, 30),
+        pants=pants,
+        pants_shadow=_shade(pants, -30),
+        boot=(58, 44, 38),
+        strap=(108, 84, 62),
         gear=gear,
+        glow=glow,
     )
 
 
@@ -61,64 +76,149 @@ def _px(surface: pygame.Surface, color: tuple[int, int, int], blocks: list[tuple
 
 
 def _pose_offsets(frame: int, pose: str) -> tuple[int, int, int]:
-    if pose == "crouch":
-        return (2, 1, 1)
     if pose == "jump":
-        return (-4, 1, 0)
-    if frame % 4 == 1:
+        return (-8, 2, 2)
+    if pose == "crouch":
+        return (4, 1, 1)
+    cycle = frame % 4
+    if cycle == 0:
         return (0, 1, 0)
-    if frame % 4 == 3:
+    if cycle == 1:
+        return (0, 2, 1)
+    if cycle == 2:
         return (1, -1, 0)
-    return (0, 0, 0)
+    return (1, -2, -1)
 
 
-@lru_cache(maxsize=512)
-def _render_sprite_64(citizen_id: str, frame: int, pose: str) -> pygame.Surface:
-    palette = _build_palette(citizen_id)
-    surf = pygame.Surface((64, 64), pygame.SRCALPHA)
+@lru_cache(maxsize=4096)
+def _render_gameplay_sprite(citizen_id: str, frame: int, pose: str, blink_step: int) -> pygame.Surface:
+    pal = _build_palette(citizen_id)
+    seed = _digest(citizen_id)
+    surf = pygame.Surface((GAMEPLAY_SOURCE_SIZE, GAMEPLAY_SOURCE_SIZE), pygame.SRCALPHA)
     y_bob, arm_shift, leg_shift = _pose_offsets(frame, pose)
 
-    # Ground shadow
-    pygame.draw.ellipse(surf, (0, 0, 0, 72), pygame.Rect(16, 52 + max(0, y_bob), 32, 8))
+    shadow_y = 105 + max(0, y_bob)
+    pygame.draw.ellipse(surf, (0, 0, 0, 78), pygame.Rect(28, shadow_y, 72, 14))
 
-    # Head + hair
-    _px(surf, palette.hair_shadow, [(20, 10 + y_bob, 24, 7)])
-    _px(surf, palette.hair, [(20, 8 + y_bob, 24, 5), (18, 11 + y_bob, 28, 4)])
-    _px(surf, palette.skin_shadow, [(21, 16 + y_bob, 22, 10)])
-    _px(surf, palette.skin, [(22, 15 + y_bob, 20, 10)])
-    _px(surf, (30, 20, 30), [(27, 20 + y_bob, 3, 2), (34, 20 + y_bob, 3, 2)])
+    # Legs and boots
+    leg_top = 72 + y_bob
+    left_leg = 47 - leg_shift
+    right_leg = 65 + leg_shift
+    _px(surf, pal.pants_shadow, [(left_leg, leg_top + 3, 17, 27), (right_leg, leg_top + 3, 17, 27)])
+    _px(surf, pal.pants, [(left_leg + 2, leg_top, 13, 26), (right_leg + 2, leg_top, 13, 26)])
+    _px(surf, _shade(pal.pants, 18), [(left_leg + 3, leg_top + 1, 11, 5), (right_leg + 3, leg_top + 1, 11, 5)])
+    _px(surf, pal.boot, [(left_leg + 1, leg_top + 27, 17, 9), (right_leg + 1, leg_top + 27, 17, 9)])
+    _px(surf, _shade(pal.boot, 18), [(left_leg + 2, leg_top + 27, 14, 2), (right_leg + 2, leg_top + 27, 14, 2)])
 
-    # Torso
-    torso_top = 25 + y_bob
-    _px(surf, palette.shirt_shadow, [(19, torso_top + 2, 26, 16)])
-    _px(surf, palette.shirt, [(20, torso_top, 24, 16)])
-    _px(surf, palette.shirt_highlight, [(22, torso_top + 1, 20, 5), (24, torso_top + 7, 10, 2)])
+    torso_top = 40 + y_bob
 
-    # Arms
-    _px(surf, palette.shirt_shadow, [(14, torso_top + 4 + arm_shift, 6, 10), (44, torso_top + 4 - arm_shift, 6, 10)])
-    _px(surf, palette.shirt, [(15, torso_top + 3 + arm_shift, 5, 9), (44, torso_top + 3 - arm_shift, 5, 9)])
-    _px(surf, palette.skin, [(15, torso_top + 12 + arm_shift, 5, 3), (44, torso_top + 12 - arm_shift, 5, 3)])
+    # Backpack and straps
+    _px(surf, _shade(pal.gear, -20), [(26, torso_top + 9, 14, 30), (24, torso_top + 16, 4, 12)])
+    _px(surf, pal.gear, [(27, torso_top + 7, 11, 30), (24, torso_top + 15, 3, 10)])
+    _px(surf, pal.strap, [(29, torso_top + 12, 7, 4), (29, torso_top + 23, 7, 4), (42, torso_top + 6, 9, 34), (77, torso_top + 6, 8, 34)])
 
-    # Belt / gear
-    _px(surf, palette.gear, [(21, torso_top + 15, 22, 3)])
-    _px(surf, _shade(palette.gear, -22), [(23, torso_top + 16, 18, 1)])
+    # Torso + vest
+    _px(surf, pal.jacket_shadow, [(40, torso_top + 2, 48, 33)])
+    _px(surf, pal.jacket, [(42, torso_top, 44, 31)])
+    _px(surf, pal.jacket_highlight, [(45, torso_top + 2, 36, 6), (48, torso_top + 13, 24, 3)])
+    _px(surf, pal.gear, [(50, torso_top + 10, 26, 18), (54, torso_top + 12, 18, 12)])
+    _px(surf, _shade(pal.gear, -24), [(52, torso_top + 14, 22, 8), (58, torso_top + 24, 10, 2)])
+    _px(surf, _shade(pal.gear, 20), [(54, torso_top + 12, 18, 3)])
 
-    # Legs
-    leg_top = torso_top + 18
-    left_leg_x = 23 - leg_shift
-    right_leg_x = 34 + leg_shift
-    _px(surf, palette.pants_shadow, [(left_leg_x, leg_top + 2, 8, 12), (right_leg_x, leg_top + 2, 8, 12)])
-    _px(surf, palette.pants, [(left_leg_x + 1, leg_top, 6, 12), (right_leg_x + 1, leg_top, 6, 12)])
-    _px(surf, (44, 38, 48), [(left_leg_x + 1, leg_top + 12, 7, 3), (right_leg_x + 1, leg_top + 12, 7, 3)])
+    # Left arm (upper + forearm + hand)
+    left_arm_top = torso_top + 8 + arm_shift
+    _px(surf, pal.jacket_shadow, [(32, left_arm_top, 10, 11), (31, left_arm_top + 10, 10, 12)])
+    _px(surf, pal.jacket, [(33, left_arm_top, 8, 10), (32, left_arm_top + 10, 8, 10)])
+    _px(surf, pal.skin_shadow, [(32, left_arm_top + 20, 10, 5)])
+    _px(surf, pal.skin, [(33, left_arm_top + 19, 8, 5)])
+
+    # Right arm (upper + forearm + hand)
+    right_arm_top = torso_top + 9 - arm_shift
+    _px(surf, pal.jacket_shadow, [(86, right_arm_top, 10, 10), (87, right_arm_top + 9, 9, 11)])
+    _px(surf, pal.jacket, [(86, right_arm_top, 8, 9), (87, right_arm_top + 9, 7, 9)])
+    _px(surf, pal.skin_shadow, [(87, right_arm_top + 18, 9, 5)])
+    _px(surf, pal.skin, [(88, right_arm_top + 17, 7, 5)])
+
+    # Head + hair shape
+    head_top = 16 + y_bob
+    _px(surf, pal.skin_shadow, [(46, head_top + 6, 36, 28)])
+    _px(surf, pal.skin, [(48, head_top + 4, 32, 28)])
+    _px(surf, pal.hair_shadow, [(40, head_top + 2, 48, 18), (39, head_top + 12, 10, 8), (79, head_top + 12, 10, 8)])
+    _px(
+        surf,
+        pal.hair,
+        [
+            (40, head_top, 48, 14),
+            (36, head_top + 8, 16, 10),
+            (79, head_top + 8, 12, 9),
+            (56, head_top + 2, 14, 18),
+            (50, head_top + 10, 6, 6),
+            (71, head_top + 10, 6, 6),
+        ],
+    )
+
+    # Eyebrows, eyes, pupils, and mouth
+    brow = _shade(pal.hair_shadow, -20)
+    _px(surf, brow, [(56, head_top + 15, 7, 2), (68, head_top + 15, 7, 2)])
+    blink_on = ((blink_step + seed[21]) % 13) == 0
+    if blink_on:
+        _px(surf, pal.outline, [(57, head_top + 19, 6, 1), (69, head_top + 19, 6, 1)])
+    else:
+        _px(surf, (236, 236, 232), [(57, head_top + 18, 6, 4), (69, head_top + 18, 6, 4)])
+        _px(surf, pal.outline, [(59, head_top + 18, 2, 4), (71, head_top + 18, 2, 4)])
+
+    mouth_variant = (blink_step + frame + seed[22]) % 3
+    if mouth_variant == 0:
+        _px(surf, pal.outline, [(63, head_top + 26, 4, 1), (67, head_top + 26, 4, 1)])
+    elif mouth_variant == 1:
+        _px(surf, pal.outline, [(64, head_top + 26, 4, 1), (63, head_top + 27, 2, 1), (68, head_top + 27, 2, 1)])
+    else:
+        _px(surf, pal.outline, [(63, head_top + 27, 4, 1), (67, head_top + 27, 4, 1)])
+
+    # Belt and pouches
+    _px(surf, pal.strap, [(44, torso_top + 30, 40, 4), (56, torso_top + 30, 16, 6), (47, torso_top + 29, 6, 7), (74, torso_top + 29, 6, 7)])
+    _px(surf, _shade(pal.strap, 20), [(44, torso_top + 30, 40, 1)])
+
+    # Flashlight
+    light_x = 92
+    light_y = torso_top + 27 - arm_shift
+    pygame.draw.circle(surf, (*pal.glow, 84), (light_x + 2, light_y + 2), 8)
+    _px(surf, (84, 76, 64), [(light_x - 2, light_y - 2, 8, 8)])
+    _px(surf, pal.glow, [(light_x + 1, light_y + 1, 3, 3)])
+
+    # Outline cleanup
+    _px(
+        surf,
+        pal.outline,
+        [
+            (47, head_top + 31, 34, 1),
+            (42, torso_top + 31, 44, 1),
+            (47, leg_top + 35, 16, 1),
+            (65, leg_top + 35, 16, 1),
+        ],
+    )
 
     if pose == "jump":
-        _px(surf, palette.shirt_highlight, [(20, torso_top + 5, 6, 3), (38, torso_top + 5, 6, 3)])
-    if pose == "crouch":
-        _px(surf, palette.shirt_shadow, [(20, torso_top + 14, 24, 3)])
+        _px(surf, pal.jacket_highlight, [(44, torso_top + 18, 8, 4), (78, torso_top + 18, 6, 4)])
+    elif pose == "crouch":
+        _px(surf, pal.pants_shadow, [(48, leg_top + 18, 30, 7)])
+        _px(surf, pal.skin_shadow, [(56, head_top + 29, 16, 2)])
 
-    # Outline silhouette
-    pygame.draw.rect(surf, palette.outline, pygame.Rect(18, 8 + y_bob, 28, 44), 1)
     return surf
+
+
+@lru_cache(maxsize=1024)
+def _render_portrait_sprite(citizen_id: str, frame: int, pose: str) -> pygame.Surface:
+    base = _render_gameplay_sprite(citizen_id, frame, pose, blink_step=frame)
+    portrait = pygame.transform.scale(base, (PORTRAIT_SOURCE_SIZE, PORTRAIT_SOURCE_SIZE))
+    vignette = pygame.Surface((PORTRAIT_SOURCE_SIZE, PORTRAIT_SOURCE_SIZE), pygame.SRCALPHA)
+    pygame.draw.ellipse(
+        vignette,
+        (0, 0, 0, 56),
+        pygame.Rect(14, PORTRAIT_SOURCE_SIZE - 60, PORTRAIT_SOURCE_SIZE - 28, 36),
+    )
+    portrait.blit(vignette, (0, 0))
+    return portrait
 
 
 def draw_citizen_sprite(
@@ -131,16 +231,17 @@ def draw_citizen_sprite(
     walk_phase: float = 0.0,
     pose: str = "walk",
 ) -> pygame.Rect:
-    frame = int(abs(walk_phase * 6.0)) % 4
-    base = _render_sprite_64(citizen_id, frame=frame, pose=pose)
-    target_size = max(24, 16 * max(1, int(scale)))
+    frame = int(abs(walk_phase * 7.0)) % 4
+    blink_step = int(abs(walk_phase * 1.5)) % 20
+    base = _render_gameplay_sprite(citizen_id, frame=frame, pose=pose, blink_step=blink_step)
+    target_size = max(24, int(16 * max(1, scale)))
     sprite = pygame.transform.scale(base, (target_size, target_size))
-    rect = pygame.Rect(x, y, target_size, target_size)
+    rect = pygame.Rect(int(x), int(y), target_size, target_size)
 
     if selected:
-        glow = pygame.Surface((target_size + 10, target_size + 10), pygame.SRCALPHA)
-        pygame.draw.ellipse(glow, (230, 208, 154, 68), glow.get_rect())
-        surface.blit(glow, (x - 5, y - 4))
+        glow = pygame.Surface((target_size + 12, target_size + 12), pygame.SRCALPHA)
+        pygame.draw.ellipse(glow, (236, 210, 140, 82), glow.get_rect())
+        surface.blit(glow, (rect.left - 6, rect.top - 4))
     surface.blit(sprite, rect)
     return rect
 
@@ -156,15 +257,25 @@ def draw_citizen_avatar(
     card = rect.inflate(-2, -2)
     pygame.draw.rect(surface, theme.COLOR_BORDER, card, border_radius=2)
     inner = card.inflate(-2, -2)
-    pygame.draw.rect(surface, (52, 34, 74), inner, border_radius=2)
+    pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, inner, border_radius=2)
     if selected:
-        glow = card.inflate(2, 2)
-        pygame.draw.rect(surface, (220, 188, 136), glow, width=1, border_radius=2)
-    size = min(inner.width - 4, inner.height - 14)
-    sprite_scale = max(2, int(size / 16))
-    sprite_size = 16 * sprite_scale
-    draw_x = inner.centerx - sprite_size // 2
-    draw_y = inner.top + 2 + (0 if not selected else int(math.sin(time_s * 4.0) * 1.5))
-    draw_citizen_sprite(surface, draw_x, draw_y, citizen_id, scale=sprite_scale, selected=selected, walk_phase=time_s)
+        pygame.draw.rect(surface, (226, 198, 132), card.inflate(2, 2), width=1, border_radius=2)
+
+    hero_size = min(inner.width - 4, inner.height - 14)
+    hero_size = max(24, hero_size)
+    frame = int(abs(time_s * 6.0)) % 4
+    portrait = _render_portrait_sprite(citizen_id, frame=frame, pose="walk")
+    hero = pygame.transform.scale(portrait, (hero_size, hero_size))
+    bob = 0 if not selected else int(math.sin(time_s * 4.2) * 2)
+    hero_rect = hero.get_rect(midtop=(inner.centerx, inner.top + 2 + bob))
+    surface.blit(hero, hero_rect)
+
     initials = "".join(part[0] for part in name.split()[:2]).upper() or "?"
-    draw_text(surface, initials[:2], theme.get_font(11, bold=True), theme.COLOR_TEXT_MUTED, (inner.centerx, inner.bottom - 3), "midbottom")
+    draw_text(
+        surface,
+        initials[:2],
+        theme.get_font(11, bold=True, kind="display"),
+        theme.COLOR_TEXT_MUTED,
+        (inner.centerx, inner.bottom - 3),
+        "midbottom",
+    )

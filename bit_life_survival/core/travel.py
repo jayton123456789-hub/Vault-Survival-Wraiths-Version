@@ -4,6 +4,7 @@ from typing import Any
 
 from .loader import ContentBundle
 from .models import GameState, clamp_meter, make_log_entry, sync_total_injury
+from .run_director import snapshot as director_snapshot
 
 BASE_SPEED = 1.0
 BASE_DRAIN = {
@@ -98,12 +99,14 @@ def advance_travel(state: GameState, content: ContentBundle) -> list:
     stamina_mul = loadout["stamina_mul"]
     hydration_mul = loadout["hydration_mul"]
     morale_mul = loadout["morale_mul"]
+    director = director_snapshot(state.distance, state.step, state.seed)
 
     distance_delta = max(0.0, BASE_SPEED * (1.0 + speed_bonus))
-    stamina_drain = BASE_DRAIN["stamina"] * biome.meter_drain_mul.stamina * stamina_mul
-    hydration_drain = BASE_DRAIN["hydration"] * biome.meter_drain_mul.hydration * hydration_mul
+    stamina_drain = BASE_DRAIN["stamina"] * biome.meter_drain_mul.stamina * stamina_mul * director.drain_multiplier
+    hydration_drain = BASE_DRAIN["hydration"] * biome.meter_drain_mul.hydration * hydration_mul * director.drain_multiplier
     morale_drain = (
-        BASE_DRAIN["morale"] * biome.meter_drain_mul.morale * morale_mul + _morale_penalty_from_condition(state)
+        (BASE_DRAIN["morale"] * biome.meter_drain_mul.morale * morale_mul * director.drain_multiplier)
+        + _morale_penalty_from_condition(state)
     )
 
     state.step += 1
@@ -124,6 +127,13 @@ def advance_travel(state: GameState, content: ContentBundle) -> list:
             ),
             data={
                 "distanceDelta": distance_delta,
+                "director": {
+                    "tier": director.threat_tier,
+                    "drainMultiplier": director.drain_multiplier,
+                    "hazardMultiplier": director.hazard_multiplier,
+                    "rewardMultiplier": director.reward_multiplier,
+                    "waveActive": director.wave_active,
+                },
                 "metersDelta": {
                     "stamina": -stamina_drain,
                     "hydration": -hydration_drain,

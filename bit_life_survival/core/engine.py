@@ -257,6 +257,9 @@ def advance_to_next_event(
         state.event_cooldowns[event.id] = cooldown_steps
 
     state.last_event_id = event.id
+    state.recent_event_ids.append(event.id)
+    if len(state.recent_event_ids) > 7:
+        state.recent_event_ids = state.recent_event_ids[-7:]
 
     event_instance = _instantiate_event(event, state, content)
     logs.append(make_log_entry(state, "event", f"{event.title}: {event.text}", data={"eventId": event.id}))

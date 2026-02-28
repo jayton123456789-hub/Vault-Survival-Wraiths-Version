@@ -13,7 +13,7 @@ MaterialName = Literal["scrap", "cloth", "plastic", "metal"]
 BodyPart = Literal["head", "torso", "left_arm", "right_arm", "left_leg", "right_leg"]
 RunLogCategory = Literal["TRAVEL", "EVENT", "CHOICE", "OUTCOME", "LOOT", "INJURY", "HEAL", "SYSTEM"]
 
-SAVE_VERSION = 3
+SAVE_VERSION = 4
 
 RUNNER_EQUIP_SLOTS = ("pack", "armor", "vehicle", "utility1", "utility2", "faction")
 METER_NAMES: tuple[MeterName, MeterName, MeterName] = ("stamina", "hydration", "morale")
@@ -95,6 +95,10 @@ class Recipe(StrictModel):
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     description: str = ""
+    category: str | None = None
+    unlock_tav: int | None = Field(default=None, alias="unlockTav", ge=0)
+    purpose: str | None = None
+    tutorial_use: str | None = Field(default=None, alias="tutorialUse")
     inputs: dict[str, int] = Field(default_factory=dict)
     output_item: str = Field(alias="outputItem", min_length=1)
     output_qty: int = Field(default=1, alias="outputQty", ge=1)
@@ -185,6 +189,7 @@ class GameState(StrictModel):
     dead: bool = False
     death_reason: str | None = None
     last_event_id: str | None = None
+    recent_event_ids: list[str] = Field(default_factory=list)
     event_cooldowns: dict[str, int] = Field(default_factory=dict)
     rng_state: int = Field(gt=0)
     rng_calls: int = Field(default=0, ge=0)
@@ -264,6 +269,9 @@ class SettingsState(StrictModel):
     seeded_mode: bool = True
     base_seed: int = 1337
     seen_run_help: bool = False
+    theme_preset: str = "ember"
+    font_scale: float = Field(default=1.0, ge=0.75, le=1.6)
+    show_tooltips: bool = True
 
 
 class VaultState(StrictModel):

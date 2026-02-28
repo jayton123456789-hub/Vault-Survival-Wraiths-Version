@@ -15,7 +15,13 @@ class GameplaySettings(BaseModel):
     save_slots: int = Field(default=3, ge=3, le=5)
     tutorial_completed: bool = False
     replay_tutorial: bool = False
+    vault_assistant_enabled: bool = True
+    vault_assistant_stage: int = Field(default=0, ge=0, le=3)
+    vault_assistant_completed: bool = False
+    replay_vault_assistant: bool = False
+    vault_assistant_tav_briefed: bool = False
     base_seed: int = 1337
+    show_tooltips: bool = True
 
 
 class VideoSettings(BaseModel):
@@ -25,7 +31,7 @@ class VideoSettings(BaseModel):
     resolution: list[int] = Field(default_factory=lambda: [1280, 720], min_length=2, max_length=2)
     ui_scale: float = Field(default=1.0, ge=0.75, le=1.5)
     vsync: bool = False
-    ui_theme: str = "amethyst"
+    ui_theme: str = "ember"
 
 
 class AudioSettings(BaseModel):

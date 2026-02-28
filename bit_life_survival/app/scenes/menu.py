@@ -7,8 +7,9 @@ import pygame
 
 from bit_life_survival.app.ui import theme
 from bit_life_survival.app.ui.avatar import draw_citizen_sprite
-from bit_life_survival.app.ui.layout import anchored_rect, split_rows
-from bit_life_survival.app.ui.widgets import Button, Panel, draw_text, wrap_text
+from bit_life_survival.app.ui.design_system import clamp_rect
+from bit_life_survival.app.ui.layout import split_columns, split_rows
+from bit_life_survival.app.ui.widgets import Button, Panel, SectionCard, clamp_wrapped_lines, draw_text, wrap_text
 
 from .core import Scene
 
@@ -19,7 +20,9 @@ class MainMenuScene(Scene):
         self.buttons: list[Button] = []
         self._last_size: tuple[int, int] | None = None
         self._panel_rect = pygame.Rect(0, 0, 0, 0)
-        self._title_rect = pygame.Rect(0, 0, 0, 0)
+        self._hero_rect = pygame.Rect(0, 0, 0, 0)
+        self._actions_rect = pygame.Rect(0, 0, 0, 0)
+        self._intel_rect = pygame.Rect(0, 0, 0, 0)
         self._footer_rect = pygame.Rect(0, 0, 0, 0)
 
     def _continue(self, app) -> None:
@@ -53,38 +56,24 @@ class MainMenuScene(Scene):
         self._last_size = app.screen.get_size()
         self.buttons = []
 
-        self._panel_rect = anchored_rect(app.screen.get_rect(), (468, 640), "center")
-        self._title_rect = pygame.Rect(
-            self._panel_rect.left + 28,
-            self._panel_rect.top + 22,
-            self._panel_rect.width - 56,
-            160,
-        )
-        button_area = pygame.Rect(
-            self._panel_rect.left + 44,
-            self._panel_rect.top + 218,
-            self._panel_rect.width - 88,
-            280,
-        )
-        rows = split_rows(button_area, [1, 1, 1, 1, 1], gap=14)
-        self.buttons.append(Button(rows[0], "New Game", hotkey=pygame.K_n, on_click=lambda: self._new_game(app), tooltip="Create a new run in a save slot."))
-        self.buttons.append(Button(rows[1], "Continue", hotkey=pygame.K_c, on_click=lambda: self._continue(app), tooltip="Load last played save slot."))
-        self.buttons.append(Button(rows[2], "Load Game", hotkey=pygame.K_l, on_click=lambda: self._load_game(app), tooltip="Choose and load a save slot."))
-        self.buttons.append(Button(rows[3], "Options", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), tooltip="Video, audio, and gameplay settings."))
-        self.buttons.append(Button(rows[4], "Exit", hotkey=pygame.K_ESCAPE, on_click=app.quit, tooltip="Exit to desktop."))
+        self._panel_rect = clamp_rect(app.screen.get_rect(), min_w=980, min_h=620, max_w=1360, max_h=820)
+        content = pygame.Rect(self._panel_rect.left + 16, self._panel_rect.top + 36, self._panel_rect.width - 32, self._panel_rect.height - 52)
+        self._hero_rect, body, self._footer_rect = split_rows(content, [0.26, 0.60, 0.14], gap=10)
+        self._actions_rect, self._intel_rect = split_columns(body, [0.42, 0.58], gap=10)
+
+        action_body = pygame.Rect(self._actions_rect.left + 8, self._actions_rect.top + 28, self._actions_rect.width - 16, self._actions_rect.height - 36)
+        action_rows = split_rows(action_body, [1, 1, 1, 1, 1], gap=10)
+        self.buttons.append(Button(action_rows[0], "New Game", hotkey=pygame.K_n, on_click=lambda: self._new_game(app), skin_key="new_game", skin_render_mode="frame_text", max_font_role="section", tooltip="Create a new save and enter the vault."))
+        self.buttons.append(Button(action_rows[1], "Continue", hotkey=pygame.K_c, on_click=lambda: self._continue(app), skin_key="continue", skin_render_mode="frame_text", max_font_role="section", tooltip="Resume your most recent save slot."))
+        self.buttons.append(Button(action_rows[2], "Load Game", hotkey=pygame.K_l, on_click=lambda: self._load_game(app), allow_skin=False, max_font_role="section", tooltip="Choose a specific save slot."))
+        self.buttons.append(Button(action_rows[3], "Options", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), skin_key="options", skin_render_mode="frame_text", max_font_role="section", tooltip="Adjust video, gameplay, and controls."))
+        self.buttons.append(Button(action_rows[4], "Exit", hotkey=pygame.K_ESCAPE, on_click=app.quit, skin_key="exit", skin_render_mode="frame_text", max_font_role="section", tooltip="Quit to desktop."))
 
         summaries = app.save_service.list_slots()
         has_continue = app.save_service.last_slot() is not None and any(
             summary.slot == app.save_service.last_slot() and summary.occupied for summary in summaries
         )
         self.buttons[1].enabled = has_continue
-
-        self._footer_rect = pygame.Rect(
-            self._panel_rect.left + 24,
-            self._panel_rect.bottom - 76,
-            self._panel_rect.width - 48,
-            50,
-        )
 
     @staticmethod
     def _fmt_ts(value: str | None) -> str:
@@ -104,75 +93,79 @@ class MainMenuScene(Scene):
             if button.handle_event(event):
                 return
 
-    def render(self, app, surface: pygame.Surface) -> None:
-        self._build_layout(app)
-        app.backgrounds.draw(surface, "vault")
-        Panel(self._panel_rect).draw(surface)
-        pygame.draw.rect(surface, (64, 34, 92), self._title_rect, border_radius=2)
-        pygame.draw.rect(surface, theme.COLOR_BORDER, self._title_rect, width=2, border_radius=2)
+    def _draw_hero(self, surface: pygame.Surface) -> None:
+        hero = SectionCard(self._hero_rect, "Industrial Command").draw(surface)
+        draw_text(surface, "VAULT SURVIVAL", theme.get_role_font("title", bold=True, kind="display"), theme.COLOR_TEXT, (hero.left + 10, hero.top + 10))
+        draw_text(surface, "Select protocol. Deploy teams. Recover value. Expand the vault.", theme.get_role_font("body"), theme.COLOR_TEXT_MUTED, (hero.left + 12, hero.top + 36))
 
-        draw_text(surface, "VAULT", theme.get_font(86, bold=True), (36, 22, 48), (self._panel_rect.centerx + 2, self._panel_rect.top + 82), "center")
-        draw_text(surface, "SURVIVAL", theme.get_font(72, bold=True), (36, 22, 48), (self._panel_rect.centerx + 2, self._panel_rect.top + 140), "center")
         t = pygame.time.get_ticks() / 1000.0
-        path = [
-            (self._title_rect.left + 68, self._title_rect.top + 86),
-            (self._title_rect.left + 130, self._title_rect.top + 66),
-            (self._title_rect.left + 212, self._title_rect.top + 72),
-            (self._title_rect.left + 292, self._title_rect.top + 64),
-            (self._title_rect.left + 352, self._title_rect.top + 82),
-            (self._title_rect.left + 314, self._title_rect.top + 120),
-            (self._title_rect.left + 252, self._title_rect.top + 134),
-            (self._title_rect.left + 168, self._title_rect.top + 136),
-            (self._title_rect.left + 98, self._title_rect.top + 132),
-        ]
-        speed = 1.8
-        total = len(path)
-        seg = (t * speed) % total
-        i0 = int(seg)
-        i1 = (i0 + 1) % total
-        frac = seg - i0
-        x = int(path[i0][0] + (path[i1][0] - path[i0][0]) * frac)
-        y = int(path[i0][1] + (path[i1][1] - path[i0][1]) * frac - abs(math.sin(frac * math.pi)) * 7)
-        draw_citizen_sprite(surface, x, y, citizen_id="menu_mascot", scale=2, selected=True, walk_phase=t * 1.7, pose="jump")
-        draw_text(surface, "VAULT", theme.get_font(86, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 80), "center")
-        draw_text(surface, "SURVIVAL", theme.get_font(72, bold=True), theme.COLOR_TEXT, (self._panel_rect.centerx, self._panel_rect.top + 138), "center")
-        draw_text(
-            surface,
-            "Choose a protocol to continue.",
-            theme.get_font(14),
-            theme.COLOR_TEXT_MUTED,
-            (self._panel_rect.centerx, self._panel_rect.top + 192),
-            "center",
-        )
+        center_x = hero.right - 120
+        center_y = hero.centery + 8
+        orbit = 24
+        x = int(center_x + math.cos(t * 1.1) * orbit) - 26
+        y = int(center_y + math.sin(t * 1.7) * 8) - 26
+        draw_citizen_sprite(surface, x, y, citizen_id="menu_mascot", scale=3, selected=False, walk_phase=t * 1.5, pose="walk")
 
-        mouse_pos = app.virtual_mouse_pos()
-        for button in self.buttons:
-            if button.text == "Exit":
-                button.bg = (124, 64, 72)
-                button.bg_hover = (162, 74, 84)
-            elif button.text == "Options":
-                button.bg = (130, 84, 76)
-                button.bg_hover = (168, 108, 94)
-            elif button.text == "Load Game":
-                button.bg = (78, 104, 122)
-                button.bg_hover = (108, 132, 154)
-            else:
-                button.bg = (78, 110, 96)
-                button.bg_hover = (108, 148, 126)
-            button.draw(surface, mouse_pos)
+    def _draw_intel(self, app, surface: pygame.Surface) -> None:
+        body = SectionCard(self._intel_rect, "Command Intel").draw(surface)
+        lines = [
+            "Crafting is inside Operations.",
+            "Use Mission / Runner Snapshot / Vault toggles in Base.",
+            "Different lanes now allow crowd pass-through.",
+            "Select 2560x1440 in Settings for native monitor fit.",
+        ]
+        y = body.top
+        bottom = body.bottom
+        for line in lines:
+            if y >= bottom:
+                break
+            wrapped, _ = clamp_wrapped_lines(line, theme.get_role_font("body"), body.width, bottom - y, line_spacing=4)
+            for segment in wrapped:
+                if y + theme.get_role_font("body").get_linesize() > bottom:
+                    break
+                draw_text(surface, segment, theme.get_role_font("body"), theme.COLOR_TEXT, (body.left, y))
+                y += theme.FONT_SIZE_BODY + 4
 
         latest = app.save_service.last_slot()
         summaries = {entry.slot: entry for entry in app.save_service.list_slots()}
+        y += 6
+        draw_text(surface, "Save Snapshot", theme.get_role_font("section", bold=True, kind="display"), theme.COLOR_TEXT, (body.left, y))
+        y += 28
         if latest is not None and latest in summaries and summaries[latest].occupied:
             info = summaries[latest]
-            info_line = (
-                f"Last Slot {latest}: Lv {info.vault_level} | TAV {info.tav} | "
-                f"Last played {self._fmt_ts(info.last_played)}"
-            )
+            lines = [
+                f"Slot {latest}  |  Vault Lv {info.vault_level}  |  TAV {info.tav}",
+                f"Drone Bay {info.drone_bay_level}  |  Last Played {self._fmt_ts(info.last_played)}",
+            ]
         else:
-            info_line = "No active save slot yet."
-        for idx, line in enumerate(wrap_text(info_line, theme.get_font(14), self._footer_rect.width)):
-            draw_text(surface, line, theme.get_font(14), theme.COLOR_TEXT_MUTED, (self._footer_rect.left, self._footer_rect.top + idx * 16))
+            lines = ["No active save slot.", "Start a new protocol to begin."]
+        for line in lines:
+            if y >= bottom:
+                break
+            wrapped, _ = clamp_wrapped_lines(line, theme.get_role_font("meta"), body.width, bottom - y, line_spacing=6)
+            for segment in wrapped:
+                if y + theme.get_role_font("meta").get_linesize() > bottom:
+                    break
+                draw_text(surface, segment, theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (body.left, y))
+                y += theme.FONT_SIZE_META + 6
 
+    def render(self, app, surface: pygame.Surface) -> None:
+        self._build_layout(app)
+        app.backgrounds.draw(surface, "vault")
+        Panel(self._panel_rect, title="Main Command").draw(surface)
+
+        self._draw_hero(surface)
+        SectionCard(self._actions_rect, "Protocol Actions").draw(surface)
+        self._draw_intel(app, surface)
+
+        mouse_pos = app.virtual_mouse_pos()
+        for button in self.buttons:
+            button.draw(surface, mouse_pos)
+
+        footer = SectionCard(self._footer_rect, "Status").draw(surface)
         if self.message:
-            draw_text(surface, self.message, theme.get_font(16), theme.COLOR_WARNING, (self._panel_rect.centerx, self._panel_rect.bottom - 10), "midbottom")
+            draw_text(surface, self.message, theme.get_role_font("body", bold=True), theme.COLOR_WARNING, (footer.left, footer.top))
+            return
+        status = "Choose a protocol to continue."
+        for idx, line in enumerate(wrap_text(status, theme.get_role_font("meta"), footer.width)):
+            draw_text(surface, line, theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (footer.left, footer.top + idx * (theme.FONT_SIZE_META + 4)))
