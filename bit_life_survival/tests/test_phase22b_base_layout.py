@@ -60,12 +60,15 @@ def test_base_routes_to_operations_and_drone_bay() -> None:
     assert app.changed_scene.__class__.__name__ == "DroneBayScene"
 
 
-def test_base_has_bottom_context_buttons_and_large_room_stage() -> None:
+def test_base_uses_unified_intel_panel_and_large_room_stage() -> None:
     app = _AppStub()
     scene = BaseScene()
     scene._build_layout(app)
     labels = {button.text for button in scene.buttons}
-    assert {"Mission", "Runner Snapshot", "Vault"}.issubset(labels)
+    assert "Mission" not in labels
+    assert "Runner Snapshot" not in labels
+    assert "Vault" not in labels
+    assert scene._context_panel_rect.height >= 110
     assert scene._intake_room_rect.height >= 180
     assert scene._deploy_room_rect.height >= 180
     assert scene._claw_controls_rect.top >= scene._selection_rect.bottom
@@ -112,6 +115,5 @@ def test_base_mission_context_includes_next_run_profile_preview() -> None:
     scene = BaseScene()
     scene._build_layout(app)
     assert scene.active_context == "mission"
-    # Rendering should include profile lines without layout overflow/crash.
     surface = app.screen
     scene.render(app, surface)

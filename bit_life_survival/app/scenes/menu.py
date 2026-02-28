@@ -65,7 +65,18 @@ class MainMenuScene(Scene):
         action_rows = split_rows(action_body, [1, 1, 1, 1, 1], gap=10)
         self.buttons.append(Button(action_rows[0], "New Game", hotkey=pygame.K_n, on_click=lambda: self._new_game(app), skin_key="new_game", skin_render_mode="frame_text", max_font_role="section", tooltip="Create a new save and enter the vault."))
         self.buttons.append(Button(action_rows[1], "Continue", hotkey=pygame.K_c, on_click=lambda: self._continue(app), skin_key="continue", skin_render_mode="frame_text", max_font_role="section", tooltip="Resume your most recent save slot."))
-        self.buttons.append(Button(action_rows[2], "Load Game", hotkey=pygame.K_l, on_click=lambda: self._load_game(app), allow_skin=False, max_font_role="section", tooltip="Choose a specific save slot."))
+        self.buttons.append(
+            Button(
+                action_rows[2],
+                "Load Game",
+                hotkey=pygame.K_l,
+                on_click=lambda: self._load_game(app),
+                skin_key="load_game",
+                skin_render_mode="frame_text",
+                max_font_role="section",
+                tooltip="Choose a specific save slot.",
+            )
+        )
         self.buttons.append(Button(action_rows[3], "Options", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), skin_key="options", skin_render_mode="frame_text", max_font_role="section", tooltip="Adjust video, gameplay, and controls."))
         self.buttons.append(Button(action_rows[4], "Exit", hotkey=pygame.K_ESCAPE, on_click=app.quit, skin_key="exit", skin_render_mode="frame_text", max_font_role="section", tooltip="Quit to desktop."))
 
@@ -110,7 +121,7 @@ class MainMenuScene(Scene):
         body = SectionCard(self._intel_rect, "Command Intel").draw(surface)
         lines = [
             "Crafting is inside Operations.",
-            "Use Mission / Runner Snapshot / Vault toggles in Base.",
+            "Base now uses one unified intel panel (mission + runner + vault).",
             "Different lanes now allow crowd pass-through.",
             "Select 2560x1440 in Settings for native monitor fit.",
         ]

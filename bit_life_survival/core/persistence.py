@@ -54,9 +54,38 @@ def _save_claw_rng(vault: VaultState, rng: DeterministicRNG) -> None:
     vault.claw_rng_calls = rng.calls
 
 
-def _make_citizen(rng: DeterministicRNG, sequence: int) -> Citizen:
-    name = NAME_POOL[rng.next_int(0, len(NAME_POOL))]
-    quirk = QUIRK_POOL[rng.next_int(0, len(QUIRK_POOL))]
+def _pick_unique_name(rng: DeterministicRNG, used_names: set[str]) -> str:
+    available = [name for name in NAME_POOL if name not in used_names]
+    if available:
+        return available[rng.next_int(0, len(available))]
+
+    base = NAME_POOL[rng.next_int(0, len(NAME_POOL))]
+    suffix = 2
+    candidate = f"{base}-{suffix}"
+    while candidate in used_names:
+        suffix += 1
+        candidate = f"{base}-{suffix}"
+    return candidate
+
+
+def _pick_distinct_quirk(rng: DeterministicRNG, name: str, used_pairs: set[tuple[str, str]]) -> str:
+    available = [quirk for quirk in QUIRK_POOL if (name, quirk) not in used_pairs]
+    pool = available if available else QUIRK_POOL
+    return pool[rng.next_int(0, len(pool))]
+
+
+def _make_citizen(
+    rng: DeterministicRNG,
+    sequence: int,
+    *,
+    used_names: set[str] | None = None,
+    used_pairs: set[tuple[str, str]] | None = None,
+) -> Citizen:
+    names = set() if used_names is None else used_names
+    pairs = set() if used_pairs is None else used_pairs
+
+    name = _pick_unique_name(rng, names)
+    quirk = _pick_distinct_quirk(rng, name, pairs)
     cid = f"cit_{sequence:04d}_{rng.state:08x}"
     kit = {
         "water_pouch": 1,
@@ -290,9 +319,19 @@ def refill_citizen_queue(vault: VaultState, target_size: int | None = None) -> N
     _refill_from_reserve(vault, target_size)
     rng = _claw_rng(vault)
     sequence = vault.run_counter * 1000 + len(vault.citizen_queue) + len(vault.citizen_reserve) + len(vault.deploy_roster)
+
+    visible_citizens = [*vault.citizen_queue, *vault.citizen_reserve, *vault.deploy_roster]
+    if vault.current_citizen is not None:
+        visible_citizens.append(vault.current_citizen)
+    used_names = {citizen.name for citizen in visible_citizens}
+    used_pairs = {(citizen.name, citizen.quirk) for citizen in visible_citizens}
+
     while len(vault.citizen_queue) < target_size:
         sequence += 1
-        vault.citizen_queue.append(_make_citizen(rng, sequence=sequence))
+        citizen = _make_citizen(rng, sequence=sequence, used_names=used_names, used_pairs=used_pairs)
+        used_names.add(citizen.name)
+        used_pairs.add((citizen.name, citizen.quirk))
+        vault.citizen_queue.append(citizen)
     _save_claw_rng(vault, rng)
 
 

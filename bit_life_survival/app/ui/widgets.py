@@ -226,7 +226,9 @@ class Button:
             }
             role_cap = role_caps.get(self.max_font_role, theme.FONT_SIZE_TITLE)
             font_size = max(theme.FONT_SIZE_META, min(role_cap, int(self.rect.height * 0.44)))
-            font = theme.get_font(font_size, bold=True, kind="display")
+            use_bold = self.max_font_role == "title"
+            font_kind = "display" if self.max_font_role in {"title", "section"} else "body"
+            font = theme.get_font(font_size, bold=use_bold, kind=font_kind)
             text_rect = self.rect.inflate(-12, -8)
             text = self.text
             if self.text_fit_mode == "ellipsis":

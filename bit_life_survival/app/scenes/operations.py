@@ -27,13 +27,13 @@ from bit_life_survival.core.crafting import (
     locked_recipes,
     unlocked_recipes,
 )
-from bit_life_survival.core.models import GameState, Recipe
+from bit_life_survival.core.models import EquippedSlots, GameState, Recipe
 from bit_life_survival.core.persistence import get_active_deploy_citizen, store_item, take_item
 from bit_life_survival.core.travel import compute_loadout_summary
 
 from .core import Scene
 
-TAB_KEYS = ("loadout", "equippable", "craftables", "storage", "crafting")
+TAB_KEYS = ("loadout", "equippable", "storage", "crafting")
 SLOT_FILTER_VALUES = ["all", "pack", "armor", "vehicle", "utility", "faction", "consumable"]
 RARITY_FILTER_VALUES = ["all", "common", "uncommon", "rare", "legendary"]
 MATERIAL_IDS = ("scrap", "cloth", "plastic", "metal")
@@ -51,9 +51,9 @@ class OperationsScene(Scene):
         self._rows: list[tuple[str, int]] = []
         self._recipes: list[Recipe] = []
         self._recipe_rows: list[tuple[Recipe, bool]] = []
-        self._recipe_output_ids: set[str] = set()
         self._scroll: ScrollList | None = None
         self.message = ""
+        self.message_color = theme.COLOR_WARNING
         self.help_overlay = False
         self.selected_slot_filter = "all"
         self.selected_rarity_filter = "all"
@@ -84,13 +84,29 @@ class OperationsScene(Scene):
             setattr(app, "_vault_assistant_seen", flags)
         return flags
 
+    def _set_message(self, text: str, *, success: bool = False) -> None:
+        self.message = text
+        self.message_color = theme.COLOR_SUCCESS if success else theme.COLOR_WARNING
+
+    def _active_citizen(self, app):
+        return get_active_deploy_citizen(app.save_data.vault) if app.save_data else None
+
+    def _require_active_citizen(self, app, *, reason: str = "edit loadout") -> bool:
+        if self._active_citizen(app) is not None:
+            return True
+        self._set_message(f"Draft/select a citizen before you can {reason}.")
+        return False
+
     def on_enter(self, app) -> None:
-        citizen = get_active_deploy_citizen(app.save_data.vault) if app.save_data else None
+        citizen = self._active_citizen(app)
         if citizen is not None:
             app.current_loadout = citizen.loadout.model_copy(deep=True)
+        else:
+            app.current_loadout = EquippedSlots()
+            self._set_message("Draft/select a deploy citizen to enable loadout edits.")
         unlocked_now = apply_milestone_blueprints(app.save_data.vault) if app.save_data else []
         if unlocked_now:
-            self.message = f"Unlocked recipes: {', '.join(unlocked_now[:2])}"
+            self._set_message(f"Unlocked recipes: {', '.join(unlocked_now[:2])}", success=True)
             app.save_current_slot()
         self._refresh_rows(app)
         self._begin_vault_assistant(app)
@@ -162,9 +178,6 @@ class OperationsScene(Scene):
     def _is_equippable(self, item) -> bool:
         return item.slot in EQUIPPABLE_SLOTS
 
-    def _is_craftable_item(self, item_id: str, item) -> bool:
-        return item_id in self._recipe_output_ids or item.slot == "consumable"
-
     def _item_matches_filter(self, item) -> bool:
         if self.selected_slot_filter != "all" and item.slot != self.selected_slot_filter:
             return False
@@ -173,12 +186,8 @@ class OperationsScene(Scene):
         return True
 
     def _item_visible_for_tab(self, item_id: str, item) -> bool:
-        if self.tab == "loadout":
+        if self.tab in {"loadout", "equippable"}:
             return self._is_equippable(item)
-        if self.tab == "equippable":
-            return self._is_equippable(item)
-        if self.tab == "craftables":
-            return self._is_craftable_item(item_id, item)
         if self.tab == "storage":
             return True
         return False
@@ -195,7 +204,7 @@ class OperationsScene(Scene):
     def _refresh_rows(self, app) -> None:
         newly_unlocked = apply_milestone_blueprints(app.save_data.vault)
         if newly_unlocked:
-            self.message = f"Unlocked recipes: {', '.join(newly_unlocked[:2])}"
+            self._set_message(f"Unlocked recipes: {', '.join(newly_unlocked[:2])}", success=True)
             if hasattr(app, "save_current_slot"):
                 app.save_current_slot()
         unlocked = unlocked_recipes(app.save_data.vault, app.content.recipes)
@@ -204,7 +213,6 @@ class OperationsScene(Scene):
         locked.sort(key=lambda recipe: ((recipe.unlock_tav or 0), recipe.name))
         self._recipes = unlocked
         self._recipe_rows = [(recipe, True) for recipe in unlocked] + [(recipe, False) for recipe in locked]
-        self._recipe_output_ids = {recipe.output_item for recipe in app.content.recipes}
 
         rows: list[tuple[str, int]] = []
         for item_id, qty in sorted(app.save_data.vault.storage.items()):
@@ -257,29 +265,34 @@ class OperationsScene(Scene):
     def _set_tab(self, app, tab: str) -> None:
         self.tab = tab
         self.message = ""
+        self.message_color = theme.COLOR_WARNING
         self.active_slot = None
         self._refresh_rows(app)
         self._last_size = None
 
     def _focus_slot(self, app, run_slot: str) -> None:
+        if not self._require_active_citizen(app, reason="edit loadout"):
+            return
         self.active_slot = run_slot
         desired_filter = self._allowed_slot(run_slot)
         if self.selected_slot_filter != desired_filter:
             self.selected_slot_filter = desired_filter
             self._refresh_rows(app)
             self._last_size = None
-        self.message = f"Focused {run_slot}. Choose an item then press Equip Selected."
+        self._set_message(f"Focused {run_slot}. Choose an item then press Equip Selected.")
 
     def _equip_item_to_slot(self, app, run_slot: str, item_id: str) -> bool:
+        if not self._require_active_citizen(app, reason="edit loadout"):
+            return False
         item = app.content.item_by_id.get(item_id)
         if not item:
-            self.message = "Selected item no longer available."
+            self._set_message("Selected item no longer available.")
             return False
         if item.slot != self._allowed_slot(run_slot):
-            self.message = f"{item.name} cannot be equipped to {run_slot}."
+            self._set_message(f"{item.name} cannot be equipped to {run_slot}.")
             return False
         if not take_item(app.save_data.vault, item.id, 1):
-            self.message = f"{item.name} unavailable in storage."
+            self._set_message(f"{item.name} unavailable in storage.")
             return False
         current = getattr(app.current_loadout, run_slot)
         if current:
@@ -288,15 +301,17 @@ class OperationsScene(Scene):
         self._sync_citizen_loadout(app)
         app.save_current_slot()
         self._refresh_rows(app)
-        self.message = f"Equipped {item.name} to {run_slot}."
+        self._set_message(f"✓ Equipped {item.name} to {run_slot}.", success=True)
         return True
 
     def _equip_selected(self, app) -> None:
+        if not self._require_active_citizen(app, reason="edit loadout"):
+            return
         if self.active_slot is None:
-            self.message = "Focus a loadout slot first."
+            self._set_message("Focus a loadout slot first.")
             return
         if self.selected_item_id is None:
-            self.message = "Select an item from the list first."
+            self._set_message("Select an item from the list first.")
             return
         if self._equip_item_to_slot(app, self.active_slot, self.selected_item_id):
             return
@@ -309,23 +324,27 @@ class OperationsScene(Scene):
                 setattr(app.current_loadout, run_slot, None)
 
     def _equip_best_for_slot(self, app, run_slot: str) -> bool:
+        if not self._require_active_citizen(app, reason="edit loadout"):
+            return False
         current = getattr(app.current_loadout, run_slot)
         if current:
             store_item(app.save_data.vault, current, 1)
             setattr(app.current_loadout, run_slot, None)
         choice = choose_best_for_slot(app.content, app.save_data.vault.storage, run_slot, reserved={})
         if not choice:
-            self.message = f"No compatible item for {run_slot}."
+            self._set_message(f"No compatible item for {run_slot}.")
             return False
         if not take_item(app.save_data.vault, choice.item_id, 1):
-            self.message = f"Unable to reserve {choice.item_id}."
+            self._set_message(f"Unable to reserve {choice.item_id}.")
             return False
         setattr(app.current_loadout, run_slot, choice.item_id)
         self._sync_citizen_loadout(app)
-        self.message = format_choice_reason(app.content, choice)
+        self._set_message(f"✓ {format_choice_reason(app.content, choice)}", success=True)
         return True
 
     def _equip_best(self, app) -> None:
+        if not self._require_active_citizen(app, reason="edit loadout"):
+            return
         if self.active_slot:
             self._equip_best_for_slot(app, self.active_slot)
             app.save_current_slot()
@@ -334,6 +353,8 @@ class OperationsScene(Scene):
         self._equip_all(app)
 
     def _equip_all(self, app) -> None:
+        if not self._require_active_citizen(app, reason="edit loadout"):
+            return
         self._unequip_all(app)
         reserved: dict[str, int] = {}
         reason_lines: list[str] = []
@@ -349,34 +370,37 @@ class OperationsScene(Scene):
         self._sync_citizen_loadout(app)
         app.save_current_slot()
         self._refresh_rows(app)
-        self.message = " | ".join(reason_lines[:2]) if reason_lines else "No available gear to auto-equip."
+        if reason_lines:
+            self._set_message(f"✓ {' | '.join(reason_lines[:2])}", success=True)
+        else:
+            self._set_message("No available gear to auto-equip.")
 
     def _craft_selected(self, app) -> None:
         if self.tab != "crafting":
-            self.message = "Switch to Crafting tab to craft recipes."
+            self._set_message("Switch to Crafting tab to craft recipes.")
             return
         if not self.selected_recipe_id:
-            self.message = "No recipe selected."
+            self._set_message("No recipe selected.")
             return
         recipe = app.content.recipe_by_id.get(self.selected_recipe_id)
         if not recipe:
-            self.message = "Recipe missing."
+            self._set_message("Recipe missing.")
             return
         if recipe.id not in app.save_data.vault.blueprints:
             unlock_at = recipe.unlock_tav if recipe.unlock_tav is not None else 0
-            self.message = f"Recipe locked. Reach TAV {unlock_at} or find a blueprint."
+            self._set_message(f"Recipe locked. Reach TAV {unlock_at} or find a blueprint.")
             return
         if not craft(app.save_data.vault, recipe):
-            self.message = "Missing materials for that recipe."
+            self._set_message("Missing materials for that recipe.")
             return
         app.save_current_slot()
         self._refresh_rows(app)
-        self.message = f"Crafted {app.content.item_by_id[recipe.output_item].name} x{recipe.output_qty}."
+        self._set_message(f"✓ Crafted {app.content.item_by_id[recipe.output_item].name} x{recipe.output_qty}.", success=True)
 
     def _deploy(self, app) -> None:
         citizen = get_active_deploy_citizen(app.save_data.vault)
         if citizen is None:
-            self.message = "Draft a citizen before deploying."
+            self._set_message("Draft a citizen before deploying.")
             return
         seed = app.compute_run_seed()
         app.save_data.vault.last_run_seed = seed
@@ -408,7 +432,7 @@ class OperationsScene(Scene):
         self._status_rect, self._tooltip_rect = split_columns(status_row, [0.58, 0.42], gap=8)
         self._left_rect, self._right_rect = split_columns(body, [0.58, 0.42], gap=8)
 
-        tab_cols = split_columns(self._tab_rect, [1, 1, 1, 1, 1], gap=8)
+        tab_cols = split_columns(self._tab_rect, [1 for _ in TAB_KEYS], gap=8)
         for rect, tab_key in zip(tab_cols, TAB_KEYS):
             label = tab_key.title()
             button = Button(rect, label, on_click=lambda t=tab_key: self._set_tab(app, t), allow_skin=False, tooltip=f"Switch to {label}.")
@@ -467,14 +491,15 @@ class OperationsScene(Scene):
         action_cols = split_columns(self._footer_rect, [1, 1, 1, 1, 1, 1], gap=8)
         self._action_buttons["back"] = Button(action_cols[0], "Back", hotkey=pygame.K_ESCAPE, on_click=lambda: self._back(app), skin_key="back", skin_render_mode="frame_text", max_font_role="section", tooltip="Return to vault base.")
         self._action_buttons["deploy"] = Button(action_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), skin_key="deploy", skin_render_mode="frame_text", max_font_role="section", tooltip="Begin run briefing.")
-        self._action_buttons["equip_selected"] = Button(action_cols[2], "Equip Selected", hotkey=pygame.K_e, on_click=lambda: self._equip_selected(app), allow_skin=False, text_align="left", text_fit_mode="ellipsis", max_font_role="section", tooltip="Equip selected item to focused slot.")
+        self._action_buttons["equip_selected"] = Button(action_cols[2], "Equip Selected", hotkey=pygame.K_e, on_click=lambda: self._equip_selected(app), skin_key="equip_selected", skin_render_mode="frame_text", text_align="center", text_fit_mode="ellipsis", max_font_role="section", tooltip="Equip selected item to focused slot.")
         self._action_buttons["equip_best"] = Button(action_cols[3], "Equip Best", hotkey=pygame.K_b, on_click=lambda: self._equip_best(app), skin_key="equip_best", skin_render_mode="frame_text", max_font_role="section", tooltip="Auto-equip best slot or active slot.")
         self._action_buttons["equip_all"] = Button(action_cols[4], "Equip All", hotkey=pygame.K_a, on_click=lambda: self._equip_all(app), skin_key="equip_all", skin_render_mode="frame_text", max_font_role="section", tooltip="Fill all loadout slots.")
         self._action_buttons["craft"] = Button(action_cols[5], "Craft", on_click=lambda: self._craft_selected(app), skin_key="craft", skin_render_mode="frame_text", max_font_role="section", tooltip="Craft selected recipe.")
+        has_active_citizen = self._active_citizen(app) is not None
         self._action_buttons["craft"].enabled = self.tab == "crafting"
-        self._action_buttons["equip_selected"].enabled = self.tab == "loadout"
-        self._action_buttons["equip_best"].enabled = self.tab == "loadout"
-        self._action_buttons["equip_all"].enabled = self.tab == "loadout"
+        self._action_buttons["equip_selected"].enabled = self.tab == "loadout" and has_active_citizen
+        self._action_buttons["equip_best"].enabled = self.tab == "loadout" and has_active_citizen
+        self._action_buttons["equip_all"].enabled = self.tab == "loadout" and has_active_citizen
         self.buttons.extend(self._action_buttons.values())
 
     def _draw_recipe_row(self, surface: pygame.Surface, row_rect: pygame.Rect, index: int, text: str, selected: bool, now_s: float) -> None:
@@ -518,7 +543,6 @@ class OperationsScene(Scene):
         title = {
             "loadout": "Loadout Items",
             "equippable": "Equippable Gear",
-            "craftables": "Craftable Items",
             "storage": "Storage",
             "crafting": "Crafting Recipes",
         }[self.tab]
@@ -584,7 +608,14 @@ class OperationsScene(Scene):
 
     def _draw_loadout_detail(self, app, surface: pygame.Surface) -> None:
         for run_slot, button in self._slot_buttons.items():
-            button.text = run_slot.upper()
+            current_item_id = getattr(app.current_loadout, run_slot)
+            current_name = "-"
+            if current_item_id and current_item_id in app.content.item_by_id:
+                current_name = self._short_text(app.content.item_by_id[current_item_id].name, 14)
+            elif current_item_id:
+                current_name = self._short_text(current_item_id, 14)
+            marker = "✓" if current_item_id else "•"
+            button.text = f"{run_slot.upper()} {marker} {current_name}"
             button.allow_skin = False
             button.text_align = "center"
             button.text_fit_mode = "ellipsis"
@@ -592,6 +623,9 @@ class OperationsScene(Scene):
             if self.active_slot == run_slot:
                 button.bg = theme.COLOR_ACCENT_SOFT
                 button.bg_hover = theme.COLOR_ACCENT
+            elif current_item_id:
+                button.bg = theme.COLOR_SUCCESS
+                button.bg_hover = theme.COLOR_ACCENT_SOFT
             else:
                 button.bg = theme.COLOR_PANEL_ALT
                 button.bg_hover = theme.COLOR_ACCENT_SOFT
@@ -753,7 +787,6 @@ class OperationsScene(Scene):
         title = {
             "loadout": "Loadout",
             "equippable": "Gear Detail",
-            "craftables": "Craftable Detail",
             "storage": "Storage Detail",
             "crafting": "Recipe Detail",
         }[self.tab]
@@ -780,10 +813,11 @@ class OperationsScene(Scene):
         self._draw_left_panel(app, surface)
         self._draw_right_panel(app, surface)
 
+        has_active_citizen = self._active_citizen(app) is not None
         self._action_buttons["craft"].enabled = self.tab == "crafting"
-        self._action_buttons["equip_selected"].enabled = self.tab == "loadout"
-        self._action_buttons["equip_best"].enabled = self.tab == "loadout"
-        self._action_buttons["equip_all"].enabled = self.tab == "loadout"
+        self._action_buttons["equip_selected"].enabled = self.tab == "loadout" and has_active_citizen
+        self._action_buttons["equip_best"].enabled = self.tab == "loadout" and has_active_citizen
+        self._action_buttons["equip_all"].enabled = self.tab == "loadout" and has_active_citizen
 
         for button in self.buttons:
             if button in self._tab_buttons.values() or button in self._action_buttons.values():
@@ -806,7 +840,7 @@ class OperationsScene(Scene):
                     surface,
                     lines[0],
                     status_font,
-                    theme.COLOR_WARNING,
+                    self.message_color,
                     (self._status_rect.left + 8, self._status_rect.centery),
                     "midleft",
                 )
@@ -833,8 +867,8 @@ class OperationsScene(Scene):
             "Loadout: click a slot, filter compatible gear, then Equip Selected.",
             "Equip Best respects active slot focus.",
             "Equippable: browse only gear that can be equipped.",
-            "Craftables: browse crafted/consumable-focused items.",
             "Storage: full inventory plus separate materials strip.",
+            "Crafting now includes all recipe output details (no separate Craftables tab).",
             "Crafting: recipes unlock over time via TAV milestones and drops.",
             "Press any key or click to close.",
         ]

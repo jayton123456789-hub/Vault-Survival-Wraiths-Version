@@ -47,7 +47,7 @@ class _AppStub:
         return (0, 0)
 
 
-def test_menu_buttons_use_frame_text_mode_and_load_game_stays_procedural() -> None:
+def test_menu_buttons_use_frame_text_mode_for_primary_actions() -> None:
     app = _AppStub(last_slot=None, occupied=False)
     scene = MainMenuScene()
     scene._build_layout(app)
@@ -55,9 +55,9 @@ def test_menu_buttons_use_frame_text_mode_and_load_game_stays_procedural() -> No
 
     assert by_text["New Game"].skin_render_mode == "frame_text"
     assert by_text["Continue"].skin_render_mode == "frame_text"
+    assert by_text["Load Game"].skin_render_mode == "frame_text"
     assert by_text["Options"].skin_render_mode == "frame_text"
     assert by_text["Exit"].skin_render_mode == "frame_text"
-    assert by_text["Load Game"].allow_skin is False
 
 
 def test_menu_continue_enables_only_when_recent_slot_is_occupied() -> None:

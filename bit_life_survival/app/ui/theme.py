@@ -503,7 +503,7 @@ _FONT_FILES: dict[str, dict[str, str]] = {
         "bold": "PixelOperatorMonoHB8.ttf",
     },
     "display": {
-        "regular": "PixelOperatorMonoHB8.ttf",
+        "regular": "PixelOperatorMono8.ttf",
         "bold": "PixelOperatorMonoHB8.ttf",
     },
 }

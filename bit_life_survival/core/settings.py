@@ -27,7 +27,7 @@ class GameplaySettings(BaseModel):
 class VideoSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    fullscreen: bool = False
+    fullscreen: bool = True
     resolution: list[int] = Field(default_factory=lambda: [1280, 720], min_length=2, max_length=2)
     ui_scale: float = Field(default=1.0, ge=0.75, le=1.5)
     vsync: bool = False

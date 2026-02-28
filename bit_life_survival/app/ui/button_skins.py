@@ -13,6 +13,7 @@ BUTTON_DIR = Path(__file__).resolve().parents[2] / "assets" / "ui" / "buttons"
 SEMANTIC_FILES: dict[str, str] = {
     "new_game": "new_game_256x64.png",
     "continue": "continue_256x64.png",
+    "load_game": "continue_256x64.png",
     "options": "options_256x64.png",
     "exit": "exit_256x64.png",
     "loadout": "loadout_256x64.png",
@@ -27,6 +28,7 @@ SEMANTIC_FILES: dict[str, str] = {
     "back": "main_menu_256x64.png",
     "help": "options_256x64.png",
     "craft": "crafting_256x64.png",
+    "equip_selected": "loadout_256x64.png",
     "equip_best": "loadout_256x64.png",
     "equip_all": "loadout_256x64.png",
     "mission": "continue_256x64.png",
@@ -41,6 +43,7 @@ SEMANTIC_FILES: dict[str, str] = {
 TEXT_TO_KEY: dict[str, str] = {
     "new game": "new_game",
     "continue": "continue",
+    "load game": "load_game",
     "options": "options",
     "exit": "exit",
     "loadout": "loadout",
@@ -55,6 +58,7 @@ TEXT_TO_KEY: dict[str, str] = {
     "back": "back",
     "help": "help",
     "craft": "craft",
+    "equip selected": "equip_selected",
     "equip best": "equip_best",
     "equip all": "equip_all",
     "mission": "mission",

@@ -7,7 +7,7 @@ import pygame
 from bit_life_survival.app.scenes.operations import OperationsScene
 from bit_life_survival.core.loader import load_content
 from bit_life_survival.core.models import EquippedSlots
-from bit_life_survival.core.persistence import create_default_save_data
+from bit_life_survival.core.persistence import create_default_save_data, transfer_selected_citizen_to_roster
 from bit_life_survival.core.settings import default_settings
 
 
@@ -17,7 +17,10 @@ class _AppStub:
         self.screen = pygame.Surface((1280, 720))
         self.content = load_content(Path(__file__).resolve().parents[1] / "content")
         self.save_data = create_default_save_data(base_seed=2026)
-        self.current_loadout = EquippedSlots()
+        drafted = transfer_selected_citizen_to_roster(self.save_data.vault, self.save_data.vault.citizen_queue[0].id)
+        self.save_data.vault.current_citizen = drafted
+        self.save_data.vault.active_deploy_citizen_id = drafted.id
+        self.current_loadout = drafted.loadout.model_copy(deep=True)
         self.saved = False
         self.settings = default_settings()
 
@@ -56,7 +59,7 @@ def test_operations_scene_builds_all_tabs_without_error() -> None:
     app = _AppStub()
     scene = OperationsScene(initial_tab="loadout")
     scene.on_enter(app)
-    for tab in ("loadout", "equippable", "craftables", "storage", "crafting"):
+    for tab in ("loadout", "equippable", "storage", "crafting"):
         scene.tab = tab
         scene._last_size = None
         scene._build_layout(app)
@@ -102,7 +105,6 @@ def test_operations_action_strip_enablement_is_context_sensitive() -> None:
     scene.tab = "crafting"
     scene._last_size = None
     scene._build_layout(app)
-    # Mirror runtime state toggles from render path.
     scene._action_buttons["craft"].enabled = scene.tab == "crafting"
     scene._action_buttons["equip_selected"].enabled = scene.tab == "loadout"
     scene._action_buttons["equip_best"].enabled = scene.tab == "loadout"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pygame
@@ -60,6 +61,7 @@ class GameApp:
         self.quit_after_scene = False
         self.scene: Scene | None = None
 
+        os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
         pygame.init()
         self.clock = pygame.time.Clock()
         self.pixel_renderer = PixelRenderer(
@@ -100,11 +102,13 @@ class GameApp:
         self.apply_theme()
         video = self.settings["video"]
         theme.set_font_scale(float(video.get("ui_scale", 1.0)))
-        resolution = tuple(video.get("resolution", [1280, 720]))
-        fullscreen = bool(video.get("fullscreen", False))
-        flags = pygame.RESIZABLE
+        fullscreen = bool(video.get("fullscreen", True))
         if fullscreen:
-            flags |= pygame.FULLSCREEN
+            resolution = (0, 0)
+            flags = pygame.FULLSCREEN
+        else:
+            resolution = tuple(video.get("resolution", list(theme.DEFAULT_RESOLUTION)))
+            flags = pygame.RESIZABLE
         self.window = pygame.display.set_mode(resolution, flags)
         self.pixel_renderer.set_window_size(self.window.get_size())
         self.screen = self.pixel_renderer.create_canvas()
