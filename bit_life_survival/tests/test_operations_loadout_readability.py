@@ -44,4 +44,4 @@ def test_loadout_slot_buttons_show_slot_name_and_equip_state() -> None:
     for run_slot, button in scene._slot_buttons.items():
         assert button.text.startswith(run_slot.upper())
         assert button.text_align == "center"
-        assert "✓" in button.text or "•" in button.text
+        assert "[EQ]" in button.text or "[--]" in button.text

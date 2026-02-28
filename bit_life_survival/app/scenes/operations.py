@@ -301,7 +301,7 @@ class OperationsScene(Scene):
         self._sync_citizen_loadout(app)
         app.save_current_slot()
         self._refresh_rows(app)
-        self._set_message(f"✓ Equipped {item.name} to {run_slot}.", success=True)
+        self._set_message(f"Equipped {item.name} to {run_slot}.", success=True)
         return True
 
     def _equip_selected(self, app) -> None:
@@ -339,7 +339,7 @@ class OperationsScene(Scene):
             return False
         setattr(app.current_loadout, run_slot, choice.item_id)
         self._sync_citizen_loadout(app)
-        self._set_message(f"✓ {format_choice_reason(app.content, choice)}", success=True)
+        self._set_message(format_choice_reason(app.content, choice), success=True)
         return True
 
     def _equip_best(self, app) -> None:
@@ -371,7 +371,7 @@ class OperationsScene(Scene):
         app.save_current_slot()
         self._refresh_rows(app)
         if reason_lines:
-            self._set_message(f"✓ {' | '.join(reason_lines[:2])}", success=True)
+            self._set_message(f"Auto-equip: {' | '.join(reason_lines[:2])}", success=True)
         else:
             self._set_message("No available gear to auto-equip.")
 
@@ -395,7 +395,7 @@ class OperationsScene(Scene):
             return
         app.save_current_slot()
         self._refresh_rows(app)
-        self._set_message(f"✓ Crafted {app.content.item_by_id[recipe.output_item].name} x{recipe.output_qty}.", success=True)
+        self._set_message(f"Crafted {app.content.item_by_id[recipe.output_item].name} x{recipe.output_qty}.", success=True)
 
     def _deploy(self, app) -> None:
         citizen = get_active_deploy_citizen(app.save_data.vault)
@@ -614,7 +614,7 @@ class OperationsScene(Scene):
                 current_name = self._short_text(app.content.item_by_id[current_item_id].name, 14)
             elif current_item_id:
                 current_name = self._short_text(current_item_id, 14)
-            marker = "✓" if current_item_id else "•"
+            marker = "[EQ]" if current_item_id else "[--]"
             button.text = f"{run_slot.upper()} {marker} {current_name}"
             button.allow_skin = False
             button.text_align = "center"

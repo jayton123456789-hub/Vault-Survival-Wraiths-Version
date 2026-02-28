@@ -16,6 +16,9 @@ class NewGameScene(Scene):
         self.slot_buttons: list[Button] = []
         self._slot_ids: tuple[int, ...] = (1, 2, 3)
         self.back_button: Button | None = None
+        self.tutorial_toggle_button: Button | None = None
+        self.start_with_tutorial: bool = True
+        self._tutorial_pref_initialized = False
         self.modal: Modal | None = None
         self.pending_slot: int | None = None
         self._last_size: tuple[int, int] | None = None
@@ -23,9 +26,43 @@ class NewGameScene(Scene):
         self._slot_cards: list[pygame.Rect] = []
         self._subtitle_rect = pygame.Rect(0, 0, 0, 0)
 
-    def _layout(self, app) -> None:
-        if self._last_size == app.screen.get_size() and self.slot_buttons:
+    def _init_tutorial_preference(self, app) -> None:
+        if self._tutorial_pref_initialized:
             return
+        gameplay = app.settings.setdefault("gameplay", {})
+        self.start_with_tutorial = not bool(gameplay.get("tutorial_completed", False))
+        self._tutorial_pref_initialized = True
+
+    def _toggle_tutorial(self) -> None:
+        self.start_with_tutorial = not self.start_with_tutorial
+
+    def _tutorial_label(self) -> str:
+        return f"Tutorial: {'ON' if self.start_with_tutorial else 'OFF'}"
+
+    def _apply_tutorial_preference(self, app) -> None:
+        gameplay = app.settings.setdefault("gameplay", {})
+        if self.start_with_tutorial:
+            gameplay["tutorial_completed"] = False
+            gameplay["replay_tutorial"] = True
+            gameplay["vault_assistant_completed"] = False
+            gameplay["vault_assistant_stage"] = 0
+            gameplay["vault_assistant_tav_briefed"] = False
+            gameplay["replay_vault_assistant"] = True
+        else:
+            gameplay["tutorial_completed"] = True
+            gameplay["replay_tutorial"] = False
+            gameplay["vault_assistant_completed"] = True
+            gameplay["vault_assistant_stage"] = 3
+            gameplay["vault_assistant_tav_briefed"] = True
+            gameplay["replay_vault_assistant"] = False
+        setattr(app, "_vault_assistant_seen", set())
+        if hasattr(app, "save_settings"):
+            app.save_settings()
+
+    def _layout(self, app) -> None:
+        if self._last_size == app.screen.get_size() and self.slot_buttons and self.tutorial_toggle_button:
+            return
+        self._init_tutorial_preference(app)
         self._last_size = app.screen.get_size()
         self._panel_rect = clamp_rect(app.screen.get_rect(), min_w=940, min_h=600, max_w=1320, max_h=820)
         content = pygame.Rect(self._panel_rect.left + 16, self._panel_rect.top + 36, self._panel_rect.width - 32, self._panel_rect.height - 52)
@@ -47,6 +84,18 @@ class NewGameScene(Scene):
                     tooltip="Start new game in selected slot.",
                 )
             )
+
+        toggle_width = min(280, self._subtitle_rect.width // 2)
+        self.tutorial_toggle_button = Button(
+            pygame.Rect(self._subtitle_rect.right - toggle_width - 2, self._subtitle_rect.top + 2, toggle_width, self._subtitle_rect.height - 4),
+            self._tutorial_label(),
+            on_click=self._toggle_tutorial,
+            allow_skin=False,
+            text_align="center",
+            text_fit_mode="ellipsis",
+            max_font_role="section",
+            tooltip="Toggle onboarding for this new save.",
+        )
 
         self.back_button = Button(
             pygame.Rect(footer.left, footer.top + 8, 220, footer.height - 10),
@@ -79,6 +128,7 @@ class NewGameScene(Scene):
         self._start_new_game(app, slot)
 
     def _start_new_game(self, app, slot: int) -> None:
+        self._apply_tutorial_preference(app)
         base_seed = int(app.settings["gameplay"].get("base_seed", 1337))
         app.new_slot(slot, base_seed=base_seed)
         from .base import BaseScene
@@ -103,6 +153,8 @@ class NewGameScene(Scene):
                 self.pending_slot = None
             return
 
+        if self.tutorial_toggle_button and self.tutorial_toggle_button.handle_event(event):
+            return
         if self.back_button and self.back_button.handle_event(event):
             return
         for button in self.slot_buttons:
@@ -149,6 +201,12 @@ class NewGameScene(Scene):
 
         subtitle = SectionCard(self._subtitle_rect, "Slot Selection").draw(surface)
         draw_text(surface, "Choose a slot and launch a new protocol.", theme.get_role_font("body"), theme.COLOR_TEXT_MUTED, (subtitle.left, subtitle.top + 2))
+        mode_text = "Tutorial ON: guided onboarding + assistant prompts" if self.start_with_tutorial else "Tutorial OFF: skip onboarding prompts"
+        draw_text(surface, mode_text, theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (subtitle.left, subtitle.top + 22))
+
+        if self.tutorial_toggle_button:
+            self.tutorial_toggle_button.text = self._tutorial_label()
+            self.tutorial_toggle_button.draw(surface, app.virtual_mouse_pos())
 
         for slot, button, card in zip(self._slot_ids, self.slot_buttons, self._slot_cards):
             self._draw_slot_card(app, surface, slot, card, button)

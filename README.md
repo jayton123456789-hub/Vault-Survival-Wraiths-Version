@@ -1,10 +1,10 @@
-# Vault Survival — Wraith's Version ⚰️
+# Vault Survival - Wraith's Version
 
 A polished **pygame roguelite prototype** with deterministic runs, persistent save slots, vault progression, and a cleaner UX pass focused on readability + flow.
 
 ---
 
-## 📸 Screenshots
+## Screenshots
 
 ### Main Command
 ![Main Menu](docs/screenshots/main-menu.png)
@@ -20,14 +20,14 @@ A polished **pygame roguelite prototype** with deterministic runs, persistent sa
 
 ---
 
-## ✅ Wraith Patch Pass (12-point UX + bugfix sweep)
+## Wraith Patch Pass (12-point UX + bugfix sweep)
 
 This branch includes a full pass on the issues list:
 
 1. **Font readability pass** (less heavy button/display rendering)
 2. **Delete-save support** directly in slot cards with confirmation
 3. **Starter character uniqueness** (prevents duplicate starters)
-4. **Swapped button positions** for **Use The Claw** ↔ **Draft Selected**
+4. **Swapped button positions** for **Use The Claw** <-> **Draft Selected**
 5. **Fullscreen startup behavior** hardened (default fullscreen + centered boot)
 6. **Button style uniformity** improved across key scenes
 7. **Load Game + Equip Selected** moved onto consistent styled button pipeline
@@ -39,13 +39,13 @@ This branch includes a full pass on the issues list:
 
 ---
 
-## 🕹️ Core Flow
+## Core Flow
 
-`Intro → Main Menu → New/Load → Base → Operations (Loadout/Equippable/Storage/Crafting) → Briefing → Run → Result`
+`Intro -> Main Menu -> New/Load -> Base -> Operations (Loadout/Equippable/Storage/Crafting) -> Briefing -> Run -> Result`
 
 ---
 
-## ⚙️ Quickstart (Windows)
+## Quickstart (Windows)
 
 1. Create venv
    - `py -3.11 -m venv .venv`
@@ -56,7 +56,7 @@ This branch includes a full pass on the issues list:
 
 ---
 
-## 🎛️ Controls
+## Controls
 
 ### Base
 - `U` Use The Claw
@@ -81,7 +81,7 @@ This branch includes a full pass on the issues list:
 
 ---
 
-## 🧰 Utility Scripts
+## Utility Scripts
 
 - One-click launcher: `tools\run_game.cmd`
 - Desktop shortcut installer: `powershell -ExecutionPolicy Bypass -File tools\install_shortcut.ps1`
@@ -90,7 +90,7 @@ This branch includes a full pass on the issues list:
 
 ---
 
-## 🗂️ Data Paths (Windows)
+## Data Paths (Windows)
 
 - Install target: `C:\BitLifeSurvival\Vault_Bit_Survival\`
 - Runtime data default: `C:\BitLifeSurvival\`
@@ -104,7 +104,7 @@ Fallback order when `C:\BitLifeSurvival` is unavailable:
 
 ---
 
-## 📚 Docs
+## Docs
 
 - `docs/PHASE1_VERTICAL_SLICE.md`
 - `docs/INTRO_BBWG.md`
