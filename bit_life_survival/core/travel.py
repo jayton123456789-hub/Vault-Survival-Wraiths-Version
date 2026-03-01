@@ -3,15 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from .loader import ContentBundle
-from .models import GameState, clamp_meter, make_log_entry, sync_total_injury
+from .models import GameState, clamp_meter, clamp_injury, make_log_entry, sync_total_injury
 from .run_director import snapshot as director_snapshot
 
 BASE_SPEED = 1.0
 BASE_DRAIN = {
-    "stamina": 4.0,
-    "hydration": 5.0,
-    "morale": 1.5,
+    "stamina": 3.8,
+    "hydration": 2.9,
+    "morale": 1.3,
 }
+BASE_HUNGER_DRAIN = 2.3
 INJURY_DEATH_THRESHOLD = 100.0
 
 
@@ -23,12 +24,16 @@ def apply_death_checks(state: GameState) -> str | None:
     sync_total_injury(state)
     if state.dead:
         return state.death_reason
-    if state.meters.hydration <= 0:
+    if state.meters.stamina <= 0:
         state.dead = True
-        state.death_reason = "Dehydration"
-    elif state.meters.stamina <= 0:
-        state.dead = True
-        state.death_reason = "Collapsed"
+        if state.meters.hydration <= 0 and state.hunger <= 0:
+            state.death_reason = "Systemic failure"
+        elif state.meters.hydration <= 0:
+            state.death_reason = "Dehydration collapse"
+        elif state.hunger <= 0:
+            state.death_reason = "Starvation collapse"
+        else:
+            state.death_reason = "Collapsed"
     elif state.injury >= INJURY_DEATH_THRESHOLD:
         state.dead = True
         state.death_reason = "Succumbed to injuries"
@@ -45,6 +50,10 @@ def _morale_penalty_from_condition(state: GameState) -> float:
         penalty += 1.4
     elif state.meters.hydration <= 35:
         penalty += 0.6
+    if state.hunger <= 20:
+        penalty += 1.1
+    elif state.hunger <= 40:
+        penalty += 0.5
     if state.meters.stamina <= 20:
         penalty += 0.8
     return penalty
@@ -101,13 +110,20 @@ def advance_travel(state: GameState, content: ContentBundle) -> list:
     morale_mul = loadout["morale_mul"]
     director = director_snapshot(state.distance, state.step, state.seed)
 
-    distance_delta = max(0.0, BASE_SPEED * (1.0 + speed_bonus))
+    distance_delta = max(0.0, BASE_SPEED * (1.0 + speed_bonus + state.travel_speed_bonus))
     stamina_drain = BASE_DRAIN["stamina"] * biome.meter_drain_mul.stamina * stamina_mul * director.drain_multiplier
-    hydration_drain = BASE_DRAIN["hydration"] * biome.meter_drain_mul.hydration * hydration_mul * director.drain_multiplier
+    hydration_drain = (
+        BASE_DRAIN["hydration"]
+        * biome.meter_drain_mul.hydration
+        * hydration_mul
+        * director.drain_multiplier
+        * state.hydration_drain_mul
+    )
     morale_drain = (
         (BASE_DRAIN["morale"] * biome.meter_drain_mul.morale * morale_mul * director.drain_multiplier)
         + _morale_penalty_from_condition(state)
     )
+    hunger_drain = BASE_HUNGER_DRAIN * biome.meter_drain_mul.stamina * director.drain_multiplier * state.hunger_drain_mul
 
     state.step += 1
     state.time += 1
@@ -115,6 +131,25 @@ def advance_travel(state: GameState, content: ContentBundle) -> list:
     state.meters.stamina = clamp_meter(state.meters.stamina - stamina_drain)
     state.meters.hydration = clamp_meter(state.meters.hydration - hydration_drain)
     state.meters.morale = clamp_meter(state.meters.morale - morale_drain)
+    state.hunger = clamp_meter(state.hunger - hunger_drain)
+
+    starvation_injury = 0.0
+    dehydration_injury = 0.0
+    if state.hunger <= 0:
+        state.meters.stamina = clamp_meter(state.meters.stamina - 5.0)
+        starvation_injury = 4.0
+    elif state.hunger <= 20:
+        state.meters.stamina = clamp_meter(state.meters.stamina - 2.0)
+
+    if state.meters.hydration <= 0:
+        state.meters.stamina = clamp_meter(state.meters.stamina - 4.5)
+        dehydration_injury = 6.0
+    elif state.meters.hydration <= 18:
+        state.meters.stamina = clamp_meter(state.meters.stamina - 1.5)
+
+    if starvation_injury > 0 or dehydration_injury > 0:
+        state.injuries["torso"] = clamp_injury(state.injuries.get("torso", 0.0) + starvation_injury + dehydration_injury)
+        sync_total_injury(state)
 
     logs.append(
         make_log_entry(
@@ -123,7 +158,7 @@ def advance_travel(state: GameState, content: ContentBundle) -> list:
             (
                 f"You traveled {distance_delta:.2f} miles through the {biome.name.lower()}. "
                 f"The march drained stamina ({-stamina_drain:+.1f}), hydration ({-hydration_drain:+.1f}), "
-                f"and morale ({-morale_drain:+.1f})."
+                f"hunger ({-hunger_drain:+.1f}), and morale ({-morale_drain:+.1f})."
             ),
             data={
                 "distanceDelta": distance_delta,
@@ -138,6 +173,11 @@ def advance_travel(state: GameState, content: ContentBundle) -> list:
                     "stamina": -stamina_drain,
                     "hydration": -hydration_drain,
                     "morale": -morale_drain,
+                },
+                "hungerDelta": -hunger_drain,
+                "resourcePressure": {
+                    "dehydrationInjury": dehydration_injury,
+                    "starvationInjury": starvation_injury,
                 },
             },
         )

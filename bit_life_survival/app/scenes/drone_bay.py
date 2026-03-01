@@ -7,6 +7,7 @@ from bit_life_survival.app.ui.design_system import clamp_rect, scene_shell
 from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, CommandStrip, Panel, SectionCard, StatChip, draw_text, wrap_text
 from bit_life_survival.core.persistence import get_active_deploy_citizen, take_item
+from bit_life_survival.core.research import drone_failure_guard, drone_recovery_bonus
 
 from .core import Scene
 
@@ -160,24 +161,24 @@ class DroneBayScene(Scene):
         Panel(self._panel_rect, title="Drone Bay Command").draw(surface)
 
         level = int(app.save_data.vault.upgrades.get("drone_bay_level", 0))
-        full_recovery = min(90, 42 + level * 6)
-        partial_recovery = min(96, 24 + level * 4)
-        loss_risk = max(2, 24 - level * 2)
+        recovery_floor = int(round((0.20 + (0.08 * level) + drone_recovery_bonus(app.save_data.vault)) * 100))
+        partial_recovery = min(96, recovery_floor + 22)
+        loss_risk = max(1, int(round((0.11 - drone_failure_guard(app.save_data.vault) - (0.015 * level)) * 100)))
 
         top_body = SectionCard(self._top_rect, "Recovery Status").draw(surface)
         chips = split_columns(pygame.Rect(top_body.left, top_body.top, top_body.width, 30), [1, 1, 1, 1], gap=8)
         StatChip(chips[0], "Bay Lv", str(level)).draw(surface)
         StatChip(chips[1], "TAV", str(app.save_data.vault.tav)).draw(surface)
-        StatChip(chips[2], "Full Rec", f"{full_recovery}%").draw(surface)
+        StatChip(chips[2], "Base Rec", f"{recovery_floor}%").draw(surface)
         StatChip(chips[3], "Loss Risk", f"{loss_risk}%").draw(surface)
 
         left_body = SectionCard(self._left_rect, "Recovery Model").draw(surface)
         left_lines = [
-            f"Full Recovery: ~{full_recovery}%",
+            f"Base carried-item recovery: ~{recovery_floor}%",
             f"Partial Recovery: ~{partial_recovery}%",
-            f"Loss Risk: ~{loss_risk}%",
+            f"Severe failure risk: ~{loss_risk}%",
             f"Runs completed: {app.save_data.vault.run_counter}",
-            "Higher bay levels improve route reacquisition and salvage retention.",
+            "All finished runs also bank salvage scrap; upgrades mainly protect carried loot on bad runs.",
         ]
         y = left_body.top
         for line in left_lines[:4]:
@@ -211,9 +212,9 @@ class DroneBayScene(Scene):
 
         right_bottom = SectionCard(self._right_bottom_rect, "Inspector").draw(surface)
         notes = [
-            "Upgrades stack with run-distance value gains.",
-            "Retreat still uses drone recovery, but with lower yield.",
-            "Pair upgrades with loadout carry/resistance for stronger returns.",
+            "Drone starts around a 20% carry recovery floor before upgrades.",
+            "Deep runs lower recovery and raise severe loss risk unless you invest in research and the bay.",
+            "Pair upgrades with loadout carry and survivability for stronger returns.",
         ]
         y = right_bottom.top
         for line in notes:

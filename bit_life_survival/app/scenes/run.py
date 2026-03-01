@@ -26,9 +26,16 @@ from bit_life_survival.app.ui.widgets import (
 from bit_life_survival.core.drone import run_drone_recovery
 from bit_life_survival.core.crafting import apply_milestone_blueprints, maybe_award_blueprint_drop
 from bit_life_survival.core.engine import EventInstance, apply_choice_with_state_rng_detailed, create_initial_state, advance_to_next_event
-from bit_life_survival.core.models import EquippedSlots, LogEntry, make_log_entry
+from bit_life_survival.core.models import EquippedSlots, LogEntry, make_log_entry, sync_total_injury
 from bit_life_survival.core.outcomes import OutcomeReport, apply_outcomes
 from bit_life_survival.core.persistence import get_active_deploy_citizen, on_run_finished
+from bit_life_survival.core.research import (
+    contract_label,
+    hunger_drain_multiplier,
+    hydration_drain_multiplier,
+    injury_relief_bonus,
+    travel_speed_bonus,
+)
 from bit_life_survival.core.rng import DeterministicRNG
 from bit_life_survival.core.run_director import (
     can_extract,
@@ -153,7 +160,8 @@ class RunScene(Scene):
         self.event_overlay: EventOverlay | None = None
         self.result_overlay: ResultOverlay | None = None
         self.help_overlay = False
-        self.confirm_retreat_overlay = False
+        self.inventory_overlay = False
+        self.inventory_tab = "consumables"
         self.finalized = False
         self._finish_kind: RunFinish = "death"
         self.tutorial_overlay: TutorialOverlay | None = None
@@ -171,10 +179,16 @@ class RunScene(Scene):
         self._extract_button: Button | None = None
         self._event_option_rects: list[pygame.Rect] = []
         self._event_option_indices: list[int] = []
+        self._inventory_item_rects: list[tuple[pygame.Rect, str]] = []
 
     def on_enter(self, app) -> None:
         self._app = app
         self.state = create_initial_state(self.run_seed, self.biome_id)
+        self.state.mission_name = contract_label(app.save_data.vault)
+        self.state.hunger_drain_mul = hunger_drain_multiplier(app.save_data.vault)
+        self.state.hydration_drain_mul = hydration_drain_multiplier(app.save_data.vault)
+        self.state.travel_speed_bonus = travel_speed_bonus(app.save_data.vault)
+        self.state.medical_efficiency = injury_relief_bonus(app.save_data.vault)
         self.state.equipped = app.current_loadout.model_copy(deep=True)
         citizen = get_active_deploy_citizen(app.save_data.vault)
         app.save_data.vault.current_citizen = citizen
@@ -220,12 +234,12 @@ class RunScene(Scene):
                 ),
                 TutorialStep(
                     title="Survival Core",
-                    body="Keep stamina and hydration above zero. Injury spikes can end the run fast.",
+                    body="Manage hunger and water before stamina bottoms out. Injury spikes still end runs fast.",
                     target_rect_getter=lambda: self.hud_rect,
                 ),
                 TutorialStep(
-                    title="Tags Open Better Paths",
-                    body="Loadout tags unlock bonus event options. Push farther for bigger rewards, then extract safely.",
+                    title="Push With A Purpose",
+                    body="Deeper checkpoints return more scrap and TAV. Use Inventory for food, water, and aid before you commit.",
                     target_rect_getter=lambda: self.hud_rect,
                 ),
             ],
@@ -399,7 +413,7 @@ class RunScene(Scene):
         root = app.screen.get_rect().inflate(-16, -16)
         self.top_rect, mid_rect, self.bottom_rect = split_rows(root, [0.11, 0.73, 0.16], gap=10)
         self.timeline_rect, self.hud_rect = split_columns(mid_rect, [0.61, 0.39], gap=10)
-        self.telemetry_rect, self.loadout_rect, self.injury_rect = split_rows(self.hud_rect, [0.37, 0.28, 0.35], gap=8)
+        self.telemetry_rect, self.loadout_rect, self.injury_rect = split_rows(self.hud_rect, [0.44, 0.22, 0.34], gap=8)
 
         controls = split_columns(
             pygame.Rect(self.bottom_rect.left + 8, self.bottom_rect.top + 8, self.bottom_rect.width - 16, self.bottom_rect.height - 16),
@@ -433,13 +447,13 @@ class RunScene(Scene):
         self.buttons.append(
             Button(
                 controls[2],
-                "Retreat",
-                hotkey=pygame.K_r,
-                on_click=lambda: self._request_retreat(app),
-                skin_key="retreat",
+                "Inventory",
+                hotkey=pygame.K_i,
+                on_click=lambda: setattr(self, "inventory_overlay", not self.inventory_overlay),
+                skin_key="storage",
                 skin_render_mode="frame_text",
                 max_font_role="section",
-                tooltip="Return to vault early with a drone recovery penalty.",
+                tooltip="Open run inventory, gear, stats, and mission tracker.",
             )
         )
         self._extract_button = Button(
@@ -456,13 +470,13 @@ class RunScene(Scene):
         self.buttons.append(
             Button(
                 controls[4],
-                "Use Aid",
+                "Quick Aid",
                 hotkey=pygame.K_e,
                 on_click=lambda: self._use_healing(app),
                 skin_key="use_aid",
                 skin_render_mode="frame_text",
                 max_font_role="section",
-                tooltip="Consume one medical item from inventory to treat injuries.",
+                tooltip="Use the first available medical item without opening inventory.",
             )
         )
         self.buttons.append(
@@ -491,19 +505,25 @@ class RunScene(Scene):
         )
 
     def _request_retreat(self, app) -> None:
-        if bool(app.settings["gameplay"].get("confirm_retreat", True)):
-            self.confirm_retreat_overlay = True
-        else:
-            self._apply_retreat("Retreated to base")
+        self.message = "Retreat is disabled in standard runs. Reach an extraction checkpoint or push on."
 
     def _quit_desktop(self, app) -> None:
-        self._apply_retreat("Quit to desktop")
+        if not self.state:
+            app.quit()
+            return
+        self.state.dead = True
+        self.state.death_reason = "Run terminated"
+        self._finish_kind = "death"
+        self._append_logs(app, [make_log_entry(self.state, "system", "Run terminated. Drone dispatching for recovery.")])
         app.quit_after_scene = True
 
-    def _use_healing(self, app) -> None:
+    def _use_healing(self, app, preferred_item_id: str | None = None) -> None:
         if not self.state or self.event_overlay or self.result_overlay:
             return
-        for item_id in ("medkit_small", "med_armband", "antiseptic", "med_supplies"):
+        candidates = (preferred_item_id,) if preferred_item_id else ("medkit_small", "med_armband", "antiseptic", "med_supplies")
+        for item_id in candidates:
+            if item_id is None:
+                continue
             if int(self.state.inventory.get(item_id, 0)) <= 0:
                 continue
             rng = DeterministicRNG(seed=self.state.seed, state=self.state.rng_state, calls=self.state.rng_calls)
@@ -523,6 +543,62 @@ class RunScene(Scene):
             return
         self.message = "No healing item available in inventory."
 
+    def _consume_inventory_item(self, item_id: str) -> None:
+        if not self.state:
+            return
+        qty = int(self.state.inventory.get(item_id, 0))
+        if qty <= 0:
+            self.message = "Item not available."
+            return
+        if item_id in {"medkit_small", "med_armband", "antiseptic", "med_supplies"}:
+            self._use_healing(self._app, preferred_item_id=item_id)
+            return
+        self.state.inventory[item_id] = qty - 1
+        if self.state.inventory[item_id] <= 0:
+            self.state.inventory.pop(item_id, None)
+        if item_id == "water_pouch":
+            self.state.meters.hydration = min(100.0, self.state.meters.hydration + 35.0)
+            self.message = "Water used. Hydration stabilized."
+        elif item_id == "ration_pack":
+            self.state.hunger = min(100.0, self.state.hunger + 40.0)
+            self.message = "Ration used. Hunger pressure eased."
+        elif item_id == "energy_gel":
+            self.state.meters.stamina = min(100.0, self.state.meters.stamina + 28.0)
+            self.state.hunger = min(100.0, self.state.hunger + 8.0)
+            self.message = "Energy gel used. Quick burst recovered."
+        elif item_id == "signal_flare":
+            self.state.meters.morale = min(100.0, self.state.meters.morale + 10.0)
+            self.message = "Signal flare used. Morale rose."
+        elif item_id == "repair_kit":
+            torso = float(self.state.injuries.get("torso", 0.0))
+            self.state.injuries["torso"] = max(0.0, torso - 5.0)
+            sync_total_injury(self.state)
+            self.message = "Repair kit repurposed into a quick patch."
+        else:
+            self.state.inventory[item_id] = self.state.inventory.get(item_id, 0) + 1
+            self.message = "That item has no field use."
+            return
+        self._append_logs(
+            self._app,
+            [make_log_entry(self.state, "system", f"Used {item_id.replace('_', ' ')} from field inventory.")],
+        )
+
+    def _inventory_items(self) -> list[tuple[str, int]]:
+        if not self.state:
+            return []
+        relevant_ids = (
+            "water_pouch",
+            "ration_pack",
+            "energy_gel",
+            "medkit_small",
+            "med_armband",
+            "med_supplies",
+            "antiseptic",
+            "signal_flare",
+            "repair_kit",
+        )
+        return [(item_id, int(self.state.inventory.get(item_id, 0))) for item_id in relevant_ids if int(self.state.inventory.get(item_id, 0)) > 0]
+
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
             app.quit()
@@ -536,15 +612,30 @@ class RunScene(Scene):
                 self.help_overlay = False
             return
 
-        if self.confirm_retreat_overlay:
+        if self.inventory_overlay:
             if event.type == pygame.KEYDOWN:
-                if event.key in {pygame.K_y, pygame.K_RETURN}:
-                    self._apply_retreat("Retreated to base")
-                    self.confirm_retreat_overlay = False
-                elif event.key in {pygame.K_n, pygame.K_ESCAPE}:
-                    self.confirm_retreat_overlay = False
+                if event.key in {pygame.K_i, pygame.K_ESCAPE}:
+                    self.inventory_overlay = False
+                    return
+                if event.key == pygame.K_TAB:
+                    order = ["consumables", "gear", "stats", "mission"]
+                    next_idx = (order.index(self.inventory_tab) + 1) % len(order)
+                    self.inventory_tab = order[next_idx]
+                    return
+                if event.key in {pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4}:
+                    self.inventory_tab = ["consumables", "gear", "stats", "mission"][event.key - pygame.K_1]
+                    return
+                if self.inventory_tab == "consumables" and pygame.K_5 <= event.key <= pygame.K_9:
+                    items = self._inventory_items()
+                    idx = event.key - pygame.K_5
+                    if idx < len(items):
+                        self._consume_inventory_item(items[idx][0])
+                    return
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                self.confirm_retreat_overlay = False
+                for rect, item_id in self._inventory_item_rects:
+                    if rect.collidepoint(event.pos):
+                        self._consume_inventory_item(item_id)
+                        return
             return
 
         if self.result_overlay:
@@ -563,14 +654,14 @@ class RunScene(Scene):
 
         if self.event_overlay:
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_r:
-                    self._request_retreat(app)
-                    return
                 if event.key == pygame.K_q:
                     self._quit_desktop(app)
                     return
                 if event.key == pygame.K_h:
                     self.help_overlay = True
+                    return
+                if event.key == pygame.K_i:
+                    self.inventory_overlay = True
                     return
                 if pygame.K_1 <= event.key <= pygame.K_9:
                     self._select_event_option_from_display(event.key - pygame.K_1)
@@ -649,6 +740,7 @@ class RunScene(Scene):
                 else:
                     self._extract_button.tooltip = "Pressure wave active. Wait for a clear step to extract."
 
+        self._inventory_item_rects = []
         Panel(self.top_rect, title="Mission Strip").draw(surface)
         top_body = pygame.Rect(self.top_rect.left + 10, self.top_rect.top + 34, self.top_rect.width - 20, self.top_rect.height - 42)
         director = director_snapshot(self.state.distance, self.state.step, self.state.seed)
@@ -673,6 +765,14 @@ class RunScene(Scene):
         StatChip(top_chips[4], "Threat", f"T{director.threat_tier}").draw(surface)
         StatChip(top_chips[5], "Wave", wave_text).draw(surface)
         StatChip(top_chips[6], "Extract", extract_text).draw(surface)
+        draw_text(
+            surface,
+            f"Mission: {self.state.mission_name}. Push deeper for more scrap and TAV, then extract clean.",
+            theme.get_font(13),
+            theme.COLOR_TEXT_MUTED,
+            (top_body.left, top_body.bottom - 2),
+            "bottomleft",
+        )
 
         timeline_body = SectionCard(self.timeline_rect, "Timeline Feed").draw(surface)
         visible_count = 24 if self.show_full_log else 12
@@ -697,6 +797,7 @@ class RunScene(Scene):
         bars = [
             ("Stamina", self.state.meters.stamina, theme.COLOR_SUCCESS),
             ("Hydration", self.state.meters.hydration, theme.COLOR_ACCENT),
+            ("Hunger", self.state.hunger, (208, 174, 104)),
             ("Morale", self.state.meters.morale, (180, 146, 255)),
             ("Injury", self.state.injury, theme.COLOR_DANGER),
         ]
@@ -758,10 +859,10 @@ class RunScene(Scene):
             self._draw_result_modal(surface)
         if self.help_overlay:
             self._draw_help_overlay(surface)
+        if self.inventory_overlay:
+            self._draw_inventory_overlay(surface)
         if self.tutorial_overlay and self.tutorial_overlay.visible and not self.event_overlay and not self.result_overlay:
             self.tutorial_overlay.draw(surface)
-        if self.confirm_retreat_overlay:
-            self._draw_confirm_retreat(surface)
 
     def _event_modal_rect(self) -> pygame.Rect:
         return pygame.Rect(self._app.screen.get_width() // 2 - 420, self._app.screen.get_height() // 2 - 260, 840, 520)
@@ -839,7 +940,7 @@ class RunScene(Scene):
             draw_text(surface, reward_text, theme.get_font(14, bold=True), reward_color, (row.right - 108, row.centery - 8), "midleft")
             draw_text(surface, risk_text, theme.get_font(14, bold=True), risk_color, (row.right - 108, row.centery + 8), "midleft")
             y += 56
-        hint = "Core options advance run. Bonus locked routes are optional. | 1-4 choose | R retreat | Q quit"
+        hint = "Core options advance the contract. Bonus locked routes are optional. | 1-4 choose | I inventory | Q quit"
         draw_text(surface, hint, theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (modal_rect.left + 16, modal_rect.bottom - 20), "midleft")
 
     def _draw_result_modal(self, surface: pygame.Surface) -> None:
@@ -922,6 +1023,87 @@ class RunScene(Scene):
             "center",
         )
 
+    def _draw_inventory_overlay(self, surface: pygame.Surface) -> None:
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 185))
+        surface.blit(overlay, (0, 0))
+        rect = pygame.Rect(surface.get_width() // 2 - 420, surface.get_height() // 2 - 280, 840, 560)
+        Panel(rect, title="Field Inventory").draw(surface)
+        tabs = ["consumables", "gear", "stats", "mission"]
+        tab_rects = split_columns(pygame.Rect(rect.left + 16, rect.top + 44, rect.width - 32, 28), [1, 1, 1, 1], gap=6)
+        for tab_rect, tab_id in zip(tab_rects, tabs):
+            bg = theme.COLOR_ACCENT_SOFT if self.inventory_tab == tab_id else theme.COLOR_PANEL_ALT
+            pygame.draw.rect(surface, bg, tab_rect, border_radius=4)
+            pygame.draw.rect(surface, theme.COLOR_BORDER, tab_rect, width=1, border_radius=4)
+            draw_text(surface, tab_id.title(), theme.get_role_font("meta", bold=True), theme.COLOR_TEXT, tab_rect.center, "center")
+
+        body = pygame.Rect(rect.left + 16, rect.top + 84, rect.width - 32, rect.height - 112)
+        self._inventory_item_rects = []
+        if self.inventory_tab == "consumables":
+            y = body.top
+            items = self._inventory_items()
+            if not items:
+                draw_text(surface, "No usable field consumables right now.", theme.get_role_font("body"), theme.COLOR_TEXT_MUTED, (body.left, y))
+            for idx, (item_id, qty) in enumerate(items[:5], start=1):
+                item = self._app.content.item_by_id.get(item_id)
+                row = pygame.Rect(body.left, y, body.width, 42)
+                self._inventory_item_rects.append((row, item_id))
+                pygame.draw.rect(surface, theme.COLOR_PANEL_ALT, row, border_radius=4)
+                pygame.draw.rect(surface, theme.COLOR_BORDER, row, width=1, border_radius=4)
+                draw_text(surface, f"[{idx + 4}] {(item.name if item else item_id)} x{qty}", theme.get_role_font("body"), theme.COLOR_TEXT, (row.left + 8, row.top + 12))
+                help_line = {
+                    "water_pouch": "Restores hydration.",
+                    "ration_pack": "Restores hunger.",
+                    "energy_gel": "Restores stamina with a small food boost.",
+                    "signal_flare": "Raises morale.",
+                }.get(item_id, "Medical and utility items apply their relevant field effect.")
+                draw_text(surface, help_line, theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (row.left + 8, row.bottom - 10), "bottomleft")
+                y += 48
+        elif self.inventory_tab == "gear":
+            y = body.top
+            slots = self.state.equipped.model_dump(mode="python")
+            for slot_name, item_id in slots.items():
+                label = item_id
+                if item_id and item_id in self._app.content.item_by_id:
+                    label = self._app.content.item_by_id[item_id].name
+                draw_text(surface, f"{slot_name}: {label or '-'}", theme.get_role_font("body"), theme.COLOR_TEXT if item_id else theme.COLOR_TEXT_MUTED, (body.left, y))
+                y += theme.FONT_SIZE_BODY + 6
+        elif self.inventory_tab == "stats":
+            summary = compute_loadout_summary(self.state, self._app.content)
+            lines = [
+                f"Hydration: {self.state.meters.hydration:.1f}",
+                f"Hunger: {self.state.hunger:.1f}",
+                f"Injury: {self.state.injury:.1f}",
+                f"Carry: {self._carry_stats()[0]}/{self._carry_stats()[1]}",
+                f"Speed bonus: {summary['speed_bonus']:+.2f}",
+                f"Carry bonus: {summary['carry_bonus']:+.1f}",
+                f"Injury resist: {summary['injury_resist'] * 100:.0f}%",
+                f"Hydration drain mod: x{summary['hydration_mul'] * self.state.hydration_drain_mul:.2f}",
+                f"Hunger drain mod: x{self.state.hunger_drain_mul:.2f}",
+            ]
+            y = body.top
+            for line in lines:
+                draw_text(surface, line, theme.get_role_font("body"), theme.COLOR_TEXT, (body.left, y))
+                y += theme.FONT_SIZE_BODY + 6
+        else:
+            target = next_extraction_target(self.state.distance)
+            reached = reached_extraction_target(self.state.distance)
+            progress = f"Checkpoint reached: {reached:.1f} mi" if reached is not None else f"Next checkpoint: {target:.1f} mi"
+            lines = [
+                f"Contract: {self.state.mission_name}",
+                "Why go out: secure scrap, blueprints, and long-term TAV growth.",
+                progress,
+                "Why push farther: deeper checkpoints increase reward multipliers and salvage scrap.",
+                "How to win: spend scrap in Research, unlock contracts, and complete the command tree.",
+            ]
+            y = body.top
+            for line in lines:
+                for wrapped in wrap_text(line, theme.get_role_font("body"), body.width):
+                    draw_text(surface, wrapped, theme.get_role_font("body"), theme.COLOR_TEXT if line.startswith("Contract") else theme.COLOR_TEXT_MUTED, (body.left, y))
+                    y += theme.FONT_SIZE_BODY + 4
+                y += 2
+        draw_text(surface, "1-4 tabs | I/Esc close | 5-9 use consumables", theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (rect.left + 16, rect.bottom - 18), "midleft")
+
     def _draw_help_overlay(self, surface: pygame.Surface) -> None:
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 170))
@@ -930,12 +1112,13 @@ class RunScene(Scene):
         Panel(rect, title="Run Help").draw(surface)
         profile = director_snapshot(self.state.distance, self.state.step, self.state.seed)
         lines = [
-            "Continue: advance one step, then resolve one event.",
-            "Core risk: hydration/stamina depletion and injury spikes.",
-            "Locked entries are optional bonus paths, not required.",
-            "Farther distance = better rewards, but higher danger.",
+            "Continue: move to the next event. There is no retreat in the normal run loop.",
+            "Stay ahead of hunger, keep enough water, and patch injuries before stamina crashes.",
+            "Use Inventory to spend food, water, medicine, and utility items in the field.",
+            "Locked entries are bonus routes. Core routes always keep the run moving.",
+            "Farther distance means higher scrap and TAV, but deeper drone recovery risk.",
             f"Run Profile: {profile.profile_name} ({profile.profile_blurb})",
-            "Controls: C continue | L log | R retreat | X extract | E aid | H help | Q quit",
+            "Controls: C continue | L log | I inventory | X extract | E quick aid | H help | Q quit",
         ]
         y = rect.top + 54
         for line in lines:

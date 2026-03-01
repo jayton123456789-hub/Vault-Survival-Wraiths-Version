@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .loader import ContentBundle
 from .models import GameState, ItemRarity, VaultState
 from .persistence import store_item
+from .research import drone_failure_guard, drone_recovery_bonus, extraction_reward_bonus, salvage_scrap_bonus
 from .rng import DeterministicRNG
 from .run_director import snapshot as director_snapshot
 
@@ -22,6 +23,9 @@ class DroneRecoveryReport:
     rare_bonus: int
     milestone_bonus: int
     penalty_adjustment: int
+    severe_failure: bool = False
+    severe_failure_chance: float = 0.0
+    scrap_recovered: int = 0
 
 
 def _pack_recovery_bonus(pack_rarity: ItemRarity | None) -> float:
@@ -114,6 +118,7 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
     drone_level = int(vault.upgrades.get("drone_bay_level", 0))
     pack_item = content.item_by_id.get(state.equipped.pack) if state.equipped.pack else None
     pack_bonus = _pack_recovery_bonus(pack_item.rarity if pack_item else None)
+    director = director_snapshot(state.distance, state.step, state.seed)
 
     penalties = 0.0
     for flag in state.death_flags:
@@ -122,13 +127,26 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
         elif flag == "retreated_early":
             penalties += 0.08
 
-    extracted = "extracted" in state.death_flags
-    recovery_chance = max(0.05, min(0.95, 0.35 + (0.12 * drone_level) + pack_bonus - penalties))
-    if extracted:
-        recovery_chance = 1.0
-
     recoverable = _collect_recoverable_items(state)
     rng = _drone_rng(state)
+    extracted = "extracted" in state.death_flags
+    depth_penalty = min(0.24, max(0.0, float(state.distance)) * 0.0035)
+    hazard_penalty = max(0.0, director.hazard_multiplier - 1.0) * 0.12
+    recovery_chance = 0.20 + (0.08 * drone_level) + drone_recovery_bonus(vault) + pack_bonus - penalties - depth_penalty - hazard_penalty
+    if extracted:
+        recovery_chance += 0.34
+    recovery_chance = max(0.05, min(0.96, recovery_chance))
+    severe_failure_chance = max(
+        0.01,
+        min(
+            0.32,
+            0.11 + penalties + (depth_penalty * 0.55) + (hazard_penalty * 0.5) - drone_failure_guard(vault) - (0.015 * drone_level) - (0.05 if extracted else 0.0),
+        ),
+    )
+    severe_failure = (not extracted) and rng.next_float() < severe_failure_chance
+    if severe_failure:
+        recovery_chance = max(0.05, recovery_chance * 0.25)
+
     recovered: dict[str, int] = {}
     lost: dict[str, int] = {}
 
@@ -147,12 +165,30 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
     total_items = sum(recoverable.values())
     recovered_items = sum(recovered.values())
     status = _recovery_status(total_items, recovered_items)
+    if severe_failure and status != "full":
+        status = "lost"
+
+    scrap_recovered = int(
+        round(
+            6
+            + (max(0.0, float(state.distance)) * 1.05)
+            + salvage_scrap_bonus(vault)
+            + (director.reward_multiplier * 3.0)
+            + (4 if extracted else 0)
+        )
+    )
+    if not extracted:
+        scrap_recovered = int(round(scrap_recovered * max(0.35, recovery_chance)))
+    if severe_failure:
+        scrap_recovered = int(round(scrap_recovered * 0.4))
+    scrap_recovered = max(0, scrap_recovered)
+    if scrap_recovered > 0:
+        store_item(vault, "scrap", scrap_recovered)
 
     distance_tav = _distance_tav(state.distance)
     rare_bonus = _rare_item_bonus(recovered, content)
     milestone_bonus, milestone_awards = _milestone_bonus(vault, state.distance)
-    director = director_snapshot(state.distance, state.step, state.seed)
-    extraction_bonus = int(max(0, round(state.distance * 0.08))) if extracted else 0
+    extraction_bonus = int(max(0, round(state.distance * (0.08 + extraction_reward_bonus(vault))))) if extracted else 0
     penalty_adjustment = 0
     base_gain = distance_tav + rare_bonus + milestone_bonus + extraction_bonus
     tav_gain = max(0, int(round(base_gain * director.reward_multiplier)))
@@ -166,8 +202,11 @@ def run_drone_recovery(vault: VaultState, state: GameState, content: ContentBund
     return DroneRecoveryReport(
         status=status,
         recovery_chance=recovery_chance,
+        severe_failure=severe_failure,
+        severe_failure_chance=severe_failure_chance,
         recovered=recovered,
         lost=lost,
+        scrap_recovered=scrap_recovered,
         tav_gain=tav_gain,
         milestone_awards=milestone_awards,
         blueprint_unlocks=[],

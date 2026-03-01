@@ -94,18 +94,19 @@ def _most_injured_part(state: GameState) -> str:
 def _apply_targeted_heal(state: GameState, report: OutcomeReport, content: ContentBundle, item_id: str, qty: int) -> None:
     if qty <= 0:
         return
+    heal_scale = 1.0 + max(0.0, float(state.medical_efficiency))
     heal_targets: list[tuple[str, float]] = []
     if item_id == "medkit_small":
         part = _most_injured_part(state)
-        heal_targets.append((part, 12.0 * qty))
+        heal_targets.append((part, 12.0 * qty * heal_scale))
     elif item_id == "med_armband":
-        heal_targets.append(("left_arm", 8.0 * qty))
-        heal_targets.append(("right_arm", 8.0 * qty))
+        heal_targets.append(("left_arm", 8.0 * qty * heal_scale))
+        heal_targets.append(("right_arm", 8.0 * qty * heal_scale))
     elif item_id == "antiseptic":
-        heal_targets.append(("torso", 6.0 * qty))
+        heal_targets.append(("torso", 6.0 * qty * heal_scale))
     elif item_id == "med_supplies":
         part = _most_injured_part(state)
-        heal_targets.append((part, 7.0 * qty))
+        heal_targets.append((part, 7.0 * qty * heal_scale))
     if not heal_targets:
         return
     for part, amount in heal_targets:

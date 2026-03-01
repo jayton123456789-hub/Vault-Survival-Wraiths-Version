@@ -8,6 +8,7 @@ from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, CommandStrip, Panel, SectionCard, draw_text, wrap_text
 from bit_life_survival.core.drone import DroneRecoveryReport
 from bit_life_survival.core.models import GameState, LogEntry
+from bit_life_survival.core.research import campaign_progress
 
 from .core import Scene
 
@@ -79,14 +80,18 @@ class VictoryScene(Scene):
         draw_text(surface, f"Time {self.final_state.time} ticks", theme.get_role_font("body"), theme.COLOR_TEXT, (summary.left, y))
         y += 22
         draw_text(surface, f"Recovery status: {self.recovery_report.status}", theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (summary.left, y))
+        y += 20
+        draw_text(surface, f"Body retrieval chance {self.recovery_report.recovery_chance:.2f}", theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (summary.left, y))
 
         rewards = SectionCard(top_cols[1], "Reward Summary").draw(surface)
         y = rewards.top
         lines = [
+            f"Scrap recovered +{self.recovery_report.scrap_recovered}",
             f"TAV gain +{self.recovery_report.tav_gain}",
             f"Distance score +{self.recovery_report.distance_tav}",
             f"Rare bonus +{self.recovery_report.rare_bonus}",
             f"Milestone bonus +{self.recovery_report.milestone_bonus}",
+            f"Campaign progress {int(round(campaign_progress(app.save_data.vault) * 100))}%",
         ]
         if self.recovery_report.blueprint_unlocks:
             lines.append(f"Blueprints: {', '.join(self.recovery_report.blueprint_unlocks)}")
@@ -108,9 +113,9 @@ class VictoryScene(Scene):
         next_steps = SectionCard(bottom_cols[1], "Next Push").draw(surface)
         y = next_steps.top
         for line in [
-            "Use gained rewards to improve survivability.",
-            "Craft utility unlocks to open bonus event paths.",
-            "Push past the next extraction target for bigger gains.",
+            "Spend scrap in Research to widen the bay, unlock contracts, and finish the campaign.",
+            "Use gained rewards to improve survivability before pushing deeper checkpoints.",
+            "Push past the next extraction target for bigger scrap and TAV gains.",
         ]:
             for wrapped in wrap_text(line, theme.get_role_font("meta"), next_steps.width):
                 draw_text(surface, wrapped, theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (next_steps.left, y))

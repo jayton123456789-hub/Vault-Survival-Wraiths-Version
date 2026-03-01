@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MeterName = Literal["stamina", "hydration", "morale"]
+RunnerStatus = Literal["ready", "deployed", "dead"]
 ItemSlot = Literal["pack", "armor", "vehicle", "utility", "faction", "consumable"]
 ItemRarity = Literal["common", "uncommon", "rare", "legendary"]
 MaterialName = Literal["scrap", "cloth", "plastic", "metal"]
@@ -179,7 +180,13 @@ class GameState(StrictModel):
     distance: float = Field(default=0.0, ge=0)
     time: int = Field(default=0, ge=0)
     biome_id: str = Field(min_length=1)
+    mission_name: str = "Bootstrap Salvage Sweep"
     meters: MeterValues = Field(default_factory=MeterValues)
+    hunger: float = Field(default=100.0, ge=0, le=100)
+    hunger_drain_mul: float = Field(default=1.0, gt=0)
+    hydration_drain_mul: float = Field(default=1.0, gt=0)
+    travel_speed_bonus: float = 0.0
+    medical_efficiency: float = Field(default=0.0, ge=0, le=1.0)
     injury: float = Field(default=0.0, ge=0, le=100)
     injuries: dict[str, float] = Field(default_factory=lambda: {part: 0.0 for part in BODY_PARTS})
     flags: set[str] = Field(default_factory=set)
@@ -257,6 +264,9 @@ class Citizen(StrictModel):
     kit: dict[str, int] = Field(default_factory=dict)
     loadout: EquippedSlots = Field(default_factory=EquippedSlots)
     kit_seed: int | None = None
+    status: RunnerStatus = "ready"
+    completed_runs: int = Field(default=0, ge=0)
+    death_count: int = Field(default=0, ge=0)
 
 
 def default_materials() -> dict[str, int]:
@@ -286,9 +296,13 @@ class VaultState(StrictModel):
     citizen_reserve: list[Citizen] = Field(default_factory=list)
     current_citizen: Citizen | None = None
     active_deploy_citizen_id: str | None = None
+    fallen_citizens: list[Citizen] = Field(default_factory=list)
     citizen_queue_capacity: int = Field(default=4, ge=1, le=24)
     deploy_roster_capacity: int = Field(default=1, ge=1, le=24)
     milestones: set[str] = Field(default_factory=set)
+    research_levels: dict[str, int] = Field(default_factory=dict)
+    campaign_goal_unlocked: bool = False
+    campaign_won: bool = False
     run_counter: int = 0
     last_run_seed: int | str | None = None
     last_run_distance: float = 0.0

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .models import MATERIAL_ITEM_IDS, EquippedSlots, SAVE_VERSION, Citizen, SaveData, SettingsState, VaultState, default_materials
+from .research import deploy_capacity, queue_capacity_bonus
 from .rng import DeterministicRNG
 from .save_system import migrate_save
 
@@ -121,18 +122,12 @@ def _default_storage() -> dict[str, int]:
 
 
 def compute_queue_capacity(vault: VaultState) -> int:
-    vault_bonus = max(0, int(vault.vault_level) - 1)
-    tav_bonus = min(4, int(vault.tav) // 50)
-    drone_bonus = min(2, max(0, int(vault.upgrades.get("drone_bay_level", 0))) // 2)
-    target = DEFAULT_QUEUE_TARGET + vault_bonus + tav_bonus + drone_bonus
+    target = DEFAULT_QUEUE_TARGET + queue_capacity_bonus(vault)
     return max(DEFAULT_QUEUE_TARGET, min(MAX_QUEUE_TARGET, target))
 
 
 def compute_roster_capacity(vault: VaultState) -> int:
-    vault_bonus = max(0, int(vault.vault_level) - 1)
-    tav_bonus = min(3, int(vault.tav) // 60)
-    drone_bonus = min(2, max(0, int(vault.upgrades.get("drone_bay_level", 0))))
-    target = DEFAULT_ROSTER_TARGET + vault_bonus + tav_bonus + drone_bonus
+    target = deploy_capacity(vault)
     return max(DEFAULT_ROSTER_TARGET, min(MAX_ROSTER_TARGET, target))
 
 
@@ -164,9 +159,13 @@ def create_default_vault_state(base_seed: int = 1337) -> VaultState:
         citizen_reserve=[],
         current_citizen=None,
         active_deploy_citizen_id=None,
+        fallen_citizens=[],
         citizen_queue_capacity=DEFAULT_QUEUE_TARGET,
         deploy_roster_capacity=DEFAULT_ROSTER_TARGET,
         milestones=set(),
+        research_levels={},
+        campaign_goal_unlocked=False,
+        campaign_won=False,
         run_counter=0,
         last_run_seed=None,
         claw_rng_state=claw_seed.state,
@@ -221,26 +220,46 @@ def _normalize_roster_state(vault: VaultState) -> None:
     dedup_queue: list[Citizen] = []
     dedup_roster: list[Citizen] = []
     dedup_reserve: list[Citizen] = []
+    dedup_fallen: list[Citizen] = []
 
-    for citizen in vault.deploy_roster:
+    for citizen in vault.fallen_citizens:
         if citizen.id in seen_ids:
             continue
+        citizen.status = "dead"
+        seen_ids.add(citizen.id)
+        dedup_fallen.append(citizen)
+
+    for citizen in vault.deploy_roster:
+        if citizen.status == "dead":
+            if citizen.id not in seen_ids:
+                seen_ids.add(citizen.id)
+                dedup_fallen.append(citizen)
+            continue
+        if citizen.id in seen_ids:
+            continue
+        citizen.status = "ready"
         seen_ids.add(citizen.id)
         dedup_roster.append(citizen)
     for citizen in vault.citizen_queue:
         if citizen.id in seen_ids:
             continue
+        citizen.status = "ready"
         seen_ids.add(citizen.id)
         dedup_queue.append(citizen)
     for citizen in vault.citizen_reserve:
         if citizen.id in seen_ids:
             continue
+        if citizen.status == "dead":
+            vault.fallen_citizens.append(citizen)
+            continue
+        citizen.status = "ready"
         seen_ids.add(citizen.id)
         dedup_reserve.append(citizen)
 
     vault.deploy_roster = dedup_roster
     vault.citizen_queue = dedup_queue
     vault.citizen_reserve = dedup_reserve
+    vault.fallen_citizens = dedup_fallen
 
     if len(vault.deploy_roster) > vault.deploy_roster_capacity:
         overflow = vault.deploy_roster[vault.deploy_roster_capacity :]
@@ -345,6 +364,9 @@ def _activate_citizen(vault: VaultState, citizen: Citizen | None) -> None:
         vault.active_deploy_citizen_id = None
         vault.current_citizen = None
     else:
+        for candidate in vault.deploy_roster:
+            candidate.status = "ready"
+        citizen.status = "deployed"
         vault.active_deploy_citizen_id = citizen.id
         vault.current_citizen = citizen
 
@@ -352,17 +374,20 @@ def _activate_citizen(vault: VaultState, citizen: Citizen | None) -> None:
 def get_active_deploy_citizen(vault: VaultState) -> Citizen | None:
     if vault.active_deploy_citizen_id:
         for citizen in vault.deploy_roster:
-            if citizen.id == vault.active_deploy_citizen_id:
+            if citizen.id == vault.active_deploy_citizen_id and citizen.status != "dead":
+                citizen.status = "deployed"
                 vault.current_citizen = citizen
                 return citizen
     if vault.current_citizen:
         for citizen in vault.deploy_roster:
-            if citizen.id == vault.current_citizen.id:
+            if citizen.id == vault.current_citizen.id and citizen.status != "dead":
                 _activate_citizen(vault, citizen)
                 return citizen
     if vault.deploy_roster:
-        _activate_citizen(vault, vault.deploy_roster[0])
-        return vault.deploy_roster[0]
+        for citizen in vault.deploy_roster:
+            if citizen.status != "dead":
+                _activate_citizen(vault, citizen)
+                return citizen
     _activate_citizen(vault, None)
     return None
 
@@ -378,6 +403,7 @@ def select_roster_citizen_for_deploy(vault: VaultState, citizen_id: str) -> Citi
 def _append_to_roster(vault: VaultState, citizen: Citizen) -> bool:
     if _roster_is_full(vault):
         return False
+    citizen.status = "ready"
     vault.deploy_roster.append(citizen)
     _activate_citizen(vault, citizen)
     return True
@@ -443,21 +469,34 @@ def on_run_finished(vault: VaultState, result: str, citizen_id: str | None = Non
     if result == "death" and target_id:
         removed = remove_citizen_from_roster(vault, target_id)
         if removed and removed.id == target_id:
+            removed.status = "dead"
+            removed.death_count += 1
+            vault.fallen_citizens.append(removed)
             vault.current_citizen = None
     elif result == "retreat":
-        # Citizen remains in roster. If active is missing due older state, restore.
         if target_id and not any(c.id == target_id for c in vault.deploy_roster) and vault.current_citizen:
             if not _roster_is_full(vault):
+                vault.current_citizen.status = "ready"
                 vault.deploy_roster.append(vault.current_citizen)
             else:
+                vault.current_citizen.status = "ready"
                 vault.citizen_reserve.append(vault.current_citizen)
+        active = get_active_deploy_citizen(vault)
+        if active:
+            active.status = "ready"
+            active.completed_runs += 1
     elif result == "extracted":
-        # Successful extraction keeps the runner active and deploy-ready.
         if target_id and not any(c.id == target_id for c in vault.deploy_roster) and vault.current_citizen:
             if not _roster_is_full(vault):
+                vault.current_citizen.status = "ready"
                 vault.deploy_roster.append(vault.current_citizen)
             else:
+                vault.current_citizen.status = "ready"
                 vault.citizen_reserve.append(vault.current_citizen)
+        active = get_active_deploy_citizen(vault)
+        if active:
+            active.status = "ready"
+            active.completed_runs += 1
 
     if vault.active_deploy_citizen_id is None:
         get_active_deploy_citizen(vault)

@@ -28,6 +28,7 @@ from bit_life_survival.core.persistence import (
     storage_used,
     transfer_selected_citizen_to_roster,
 )
+from bit_life_survival.core.research import campaign_progress, contract_label, contracts_unlocked
 from bit_life_survival.core.run_director import snapshot as director_snapshot
 from bit_life_survival.core.travel import compute_loadout_summary
 
@@ -320,6 +321,11 @@ class BaseScene(Scene):
 
         app.change_scene(DroneBayScene())
 
+    def _open_research(self, app) -> None:
+        from .research import ResearchScene
+
+        app.change_scene(ResearchScene())
+
     def _deploy(self, app) -> None:
         active = self._active_citizen(app)
         if active is None:
@@ -353,27 +359,27 @@ class BaseScene(Scene):
         queue_cap = citizen_queue_target(vault)
         roster_cap = compute_roster_capacity(vault)
         if vault.run_counter < 1:
-            title = "Chapter 1: Seal and Scout"
+            title = "Phase 1: First Sweep"
             lines = [
-                "Draft one citizen, equip gear, and launch your first run.",
-                "Each run raises Tech Value and unlocks growth.",
+                "Send one runner out to secure salvage and prove the route is viable.",
+                "A finished first run should bring back enough scrap to fund real upgrades.",
             ]
-            objective = "Finish your first run and recover any loot."
-        elif vault.tav < 40:
-            title = "Chapter 2: Stabilize the Grid"
+            objective = "Draft 1 runner, deploy, then finish the first contract sweep."
+        elif not contracts_unlocked(vault):
+            title = "Phase 2: Unlock Contracts"
             lines = [
-                "Runs and recoveries raise Tech Value quickly.",
-                "Higher TAV expands intake and deploy capacity.",
+                "Use scrap in Research to unlock better survival tools and field contracts.",
+                "Push farther for more scrap, but extraction checkpoints keep runs controllable.",
             ]
-            objective = f"Reach TAV 40 (current {vault.tav})."
+            objective = f"Research Field Contracts to move beyond bootstrap sweeps. Active route: {contract_label(vault)}."
         else:
-            title = "Chapter 3: Sustain the Vault"
+            title = "Phase 3: Stabilize Command"
             lines = [
-                "Manage roster rotation and keep losses low.",
-                "Drone upgrades improve bad-run recovery.",
+                "Contracts are live: deeper runs scale rewards, but drone risk climbs with depth.",
+                "Complete late research and reach high TAV to fully stabilize the vault.",
             ]
-            objective = "Maintain expedition tempo and upgrade steadily."
-        cap_line = f"Intake {len(vault.citizen_queue)}/{queue_cap} | Deploy {len(vault.deploy_roster)}/{roster_cap}"
+            objective = f"Campaign progress {int(round(campaign_progress(vault) * 100))}%. Unlock Command Nexus and push toward the endgame."
+        cap_line = f"Intake {len(vault.citizen_queue)}/{queue_cap} | Ready Bay {len(vault.deploy_roster)}/{roster_cap}"
         return title, lines, f"{objective} {cap_line}"
 
     def _build_layout(self, app) -> None:
@@ -435,13 +441,14 @@ class BaseScene(Scene):
         self._status_row_rect = pygame.Rect(bottom_inner.left, y, bottom_inner.width, status_h)
         self._bottom_status_rect, self._bottom_tooltip_rect = split_columns(self._status_row_rect, [0.6, 0.4], gap=8)
 
-        action_cols = split_columns(self._bottom_actions_rect, [1, 1, 1, 1, 1], gap=8)
+        action_cols = split_columns(self._bottom_actions_rect, [1, 1, 1, 1, 1, 1], gap=8)
         action_buttons = [
             Button(action_cols[0], "Operations", hotkey=pygame.K_l, on_click=lambda: self._open_operations(app, "loadout"), skin_key="loadout", tooltip="Open operations hub.", skin_render_mode="frame_text", max_font_role="section"),
-            Button(action_cols[1], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), skin_key="deploy", tooltip="Launch briefing and run.", skin_render_mode="frame_text", max_font_role="section"),
-            Button(action_cols[2], "Drone Bay", hotkey=pygame.K_b, on_click=lambda: self._open_drone_bay(app), skin_key="drone_bay", tooltip="Open drone upgrades.", skin_render_mode="frame_text", max_font_role="section"),
-            Button(action_cols[3], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), skin_key="settings", tooltip="Video and gameplay settings.", skin_render_mode="frame_text", max_font_role="section"),
-            Button(action_cols[4], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._open_menu(app), skin_key="main_menu", tooltip="Return to main menu.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[1], "Research", hotkey=pygame.K_r, on_click=lambda: self._open_research(app), skin_key="storage", tooltip="Spend scrap on permanent progression.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[2], "Deploy", hotkey=pygame.K_d, on_click=lambda: self._deploy(app), skin_key="deploy", tooltip="Launch briefing and run.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[3], "Drone Bay", hotkey=pygame.K_b, on_click=lambda: self._open_drone_bay(app), skin_key="drone_bay", tooltip="Open drone upgrades.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[4], "Settings", hotkey=pygame.K_s, on_click=lambda: self._open_settings(app), skin_key="settings", tooltip="Video and gameplay settings.", skin_render_mode="frame_text", max_font_role="section"),
+            Button(action_cols[5], "Main Menu", hotkey=pygame.K_ESCAPE, on_click=lambda: self._open_menu(app), skin_key="main_menu", tooltip="Return to main menu.", skin_render_mode="frame_text", max_font_role="section"),
         ]
         self._deploy_button = action_buttons[1]
         self.buttons.extend(action_buttons)
@@ -553,11 +560,15 @@ class BaseScene(Scene):
         chapter, lines, objective = self._story_status(app)
         next_seed = app.compute_run_seed() if hasattr(app, "compute_run_seed") else 0
         profile = director_snapshot(0.0, 0, next_seed)
+        vault = app.save_data.vault
 
         _draw_block(chapter, theme.get_font(theme.FONT_SIZE_SECTION, bold=True, kind="display"), theme.COLOR_TEXT, spacing=3)
         for line in lines:
             _draw_block(line, theme.get_font(theme.FONT_SIZE_BODY), theme.COLOR_TEXT_MUTED)
         _draw_block(objective, theme.get_font(theme.FONT_SIZE_META), theme.COLOR_WARNING)
+        _draw_block(f"Current Contract Status: {contract_label(vault)}", theme.get_font(theme.FONT_SIZE_META, bold=True), theme.COLOR_TEXT)
+        if not contracts_unlocked(vault):
+            _draw_block("Contracts unlock later from Research. Early runs are straight salvage sweeps.", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED)
         _draw_block(f"Next Run Profile: {profile.profile_name}", theme.get_font(theme.FONT_SIZE_META, bold=True), theme.COLOR_TEXT)
         _draw_block(profile.profile_blurb, theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED)
 
@@ -579,7 +590,6 @@ class BaseScene(Scene):
         tags = ", ".join(summary["tags"]) if summary["tags"] else "-"
         _draw_block(f"Tags: {tags}", theme.get_font(theme.FONT_SIZE_META), theme.COLOR_TEXT_MUTED)
 
-        vault = app.save_data.vault
         queue_cap = citizen_queue_target(vault)
         roster_cap = compute_roster_capacity(vault)
         _draw_block("Vault Metrics", theme.get_font(theme.FONT_SIZE_SECTION, bold=True, kind="display"), theme.COLOR_TEXT, spacing=3)

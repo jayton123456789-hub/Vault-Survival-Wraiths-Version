@@ -8,6 +8,7 @@ from bit_life_survival.app.ui.layout import split_columns, split_rows
 from bit_life_survival.app.ui.widgets import Button, CommandStrip, Panel, SectionCard, StatChip, draw_text, wrap_text
 from bit_life_survival.core.models import GameState
 from bit_life_survival.core.persistence import get_active_deploy_citizen
+from bit_life_survival.core.research import contract_label, contracts_unlocked
 from bit_life_survival.core.rng import DeterministicRNG
 from bit_life_survival.core.run_director import EXTRACTION_MILESTONES, next_extraction_target, snapshot as director_snapshot
 from bit_life_survival.core.travel import compute_loadout_summary
@@ -128,11 +129,13 @@ class BriefingScene(Scene):
         StatChip(chips[1], "Carry", f"{float(summary['carry_bonus']):+.1f}").draw(surface)
         StatChip(chips[2], "InjuryRes", f"{float(summary['injury_resist']) * 100:.0f}%").draw(surface)
 
-    def _draw_route_card(self, surface: pygame.Surface, rect: pygame.Rect, biome_id: str) -> None:
+    def _draw_route_card(self, app, surface: pygame.Surface, rect: pygame.Rect, biome_id: str) -> None:
         body = SectionCard(rect, "Route / Biome").draw(surface)
         y = body.top
         draw_text(surface, biome_id.title(), theme.get_role_font("title", bold=True, kind="display"), theme.COLOR_ACCENT, (body.left, y))
         y += 30
+        draw_text(surface, contract_label(app.save_data.vault), theme.get_role_font("meta", bold=True), theme.COLOR_TEXT, (body.left, y))
+        y += 18
         for line in wrap_text(BIOME_BRIEF.get(biome_id, "Unknown territory. Stay adaptive."), theme.get_role_font("body"), body.width):
             draw_text(surface, line, theme.get_role_font("body"), theme.COLOR_TEXT_MUTED, (body.left, y))
             y += theme.FONT_SIZE_BODY + 4
@@ -154,20 +157,22 @@ class BriefingScene(Scene):
         y += 18
         draw_text(surface, str(self.run_seed), theme.get_role_font("body", bold=True), theme.COLOR_TEXT, (body.left, y))
 
-    def _draw_threat_card(self, surface: pygame.Surface, rect: pygame.Rect, tags: str, reward_band: str, extraction_target: float) -> None:
+    def _draw_threat_card(self, app, surface: pygame.Surface, rect: pygame.Rect, tags: str, reward_band: str, extraction_target: float) -> None:
         body = SectionCard(rect, "Mission Outlook").draw(surface)
         y = body.top
         director_safe = director_snapshot(EXTRACTION_MILESTONES[0], int(EXTRACTION_MILESTONES[0]), self.run_seed)
         director_risk = director_snapshot(EXTRACTION_MILESTONES[1], int(EXTRACTION_MILESTONES[1]), self.run_seed)
         director_deep = director_snapshot(EXTRACTION_MILESTONES[2], int(EXTRACTION_MILESTONES[2]), self.run_seed)
         lines = [
-            "Objective: reach a checkpoint, then choose push or extract.",
-            "Main Risk: hydration collapse and injury spikes.",
+            "Objective: leave with scrap, blueprints, and enough TAV to unlock the next layer of research.",
+            "Rule of thumb: farther checkpoints pay more scrap, but deep runs punish weak planning.",
+            "Main risks: hunger attrition, low water, and injury spikes.",
             f"Reward Band: {reward_band}",
             f"First extraction target: {extraction_target:.1f} mi",
             f"Safe Push {EXTRACTION_MILESTONES[0]:.0f} mi -> x{director_safe.reward_multiplier:.2f}",
             f"Risk Push {EXTRACTION_MILESTONES[1]:.0f} mi -> x{director_risk.reward_multiplier:.2f}",
             f"Deep Push {EXTRACTION_MILESTONES[2]:.0f} mi -> x{director_deep.reward_multiplier:.2f}",
+            "Contracts unlock later from Research." if not contracts_unlocked(app.save_data.vault) else "Contracts are active: better rewards, higher retrieval risk.",
             "Recommended Prep: survivability + one utility tag.",
             f"Active tags: {tags or '-'}",
         ]
@@ -228,8 +233,8 @@ class BriefingScene(Scene):
         lower = split_columns(bottom_cards, [1, 1], gap=10)
 
         self._draw_operator_card(app, surface, upper[0], summary)
-        self._draw_route_card(surface, upper[1], biome_id)
-        self._draw_threat_card(surface, lower[0], tags, reward_band, extraction_target)
+        self._draw_route_card(app, surface, upper[1], biome_id)
+        self._draw_threat_card(app, surface, lower[0], tags, reward_band, extraction_target)
         self._draw_readiness_card(app, surface, lower[1])
 
         mouse_pos = app.virtual_mouse_pos()

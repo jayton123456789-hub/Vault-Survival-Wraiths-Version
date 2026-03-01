@@ -88,12 +88,18 @@ class DeathScene(Scene):
         y += 22
         draw_text(surface, f"Recovery Status: {self.recovery_report.status}", theme.get_role_font("body", bold=True), theme.COLOR_TEXT, (body.left, y))
         y += 22
-        draw_text(surface, f"Recovery chance {self.recovery_report.recovery_chance:.2f}", theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (body.left, y))
+        draw_text(surface, f"Body retrieval chance {self.recovery_report.recovery_chance:.2f}", theme.get_role_font("meta"), theme.COLOR_TEXT_MUTED, (body.left, y))
+        y += 18
+        failure_line = f"Severe failure risk {self.recovery_report.severe_failure_chance:.2f}"
+        if self.recovery_report.severe_failure:
+            failure_line += " -> triggered"
+        draw_text(surface, failure_line, theme.get_role_font("meta"), theme.COLOR_WARNING if self.recovery_report.severe_failure else theme.COLOR_TEXT_MUTED, (body.left, y))
 
     def _draw_breakdown(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
         body = SectionCard(rect, "Recovery Breakdown").draw(surface)
         y = body.top
         rows = [
+            f"Scrap recovered +{self.recovery_report.scrap_recovered}",
             f"TAV gain +{self.recovery_report.tav_gain}",
             f"Distance score +{self.recovery_report.distance_tav}",
             f"Rare bonus +{self.recovery_report.rare_bonus}",
@@ -121,8 +127,8 @@ class DeathScene(Scene):
         body = SectionCard(rect, "Next Actions").draw(surface)
         lines = [
             "Return to Base to re-draft and prep another run.",
-            "Use Operations to tune loadout and craft support items.",
-            "Prioritize injury mitigation and hydration coverage.",
+            "Use Research and Operations to reduce hunger pressure and improve future recoveries.",
+            "Prioritize injury mitigation, food, and water coverage before pushing deeper.",
         ]
         if self.recovery_report.blueprint_unlocks:
             lines.append(f"New blueprints: {', '.join(self.recovery_report.blueprint_unlocks)}")

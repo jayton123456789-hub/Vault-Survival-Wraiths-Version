@@ -1,6 +1,6 @@
 # Vault Survival - Wraith's Version
 
-A polished **pygame roguelite prototype** with deterministic runs, persistent save slots, vault progression, and a cleaner UX pass focused on readability + flow.
+A polished **pygame roguelite prototype** with deterministic runs, persistent save slots, a new research-driven progression loop, and a rebuilt run UX.
 
 ---
 
@@ -20,28 +20,26 @@ A polished **pygame roguelite prototype** with deterministic runs, persistent sa
 
 ---
 
-## Wraith Patch Pass (12-point UX + bugfix sweep)
+## Full Sweep Overhaul
 
-This branch includes a full pass on the issues list:
+This branch now includes:
 
-1. **Font readability pass** (less heavy button/display rendering)
-2. **Delete-save support** directly in slot cards with confirmation
-3. **Starter character uniqueness** (prevents duplicate starters)
-4. **Swapped button positions** for **Use The Claw** <-> **Draft Selected**
-5. **Fullscreen startup behavior** hardened (default fullscreen + centered boot)
-6. **Button style uniformity** improved across key scenes
-7. **Load Game + Equip Selected** moved onto consistent styled button pipeline
-8. **Bottom context tabs removed** from Base (replaced by unified intel card)
-9. **Loadout equip feedback upgraded** (clear success messaging + slot indicators)
-10. **Removed redundant Craftables tab** (craft flow consolidated under Crafting)
-11. **Item-loss guardrails** when no active drafted citizen is selected
-12. **Hack-job cleanup pass** in scene/state flow and UI consistency paths
+1. **No-retreat run flow** in the standard loop. Runs now push toward extraction checkpoints instead of retreating early.
+2. **Field inventory overlay** with consumables, gear summary, stats, and mission progress (`I` in-run).
+3. **Hunger system** layered into the run loop with less oppressive dehydration pacing.
+4. **Research Command scene** with five branches, dependencies, max level 5, and scrap-based costs that rise by `+20` each level.
+5. **Deployment starts at exactly one runner** and expands later through research.
+6. **Field contracts unlock later** through research instead of appearing immediately.
+7. **Drone recovery redesign** with a ~20% baseline for carried loot, deeper-run risk, and clearer recovered vs lost reporting.
+8. **Runner state fixes** so dead runners are moved out of deploy-ready paths and never appear ready in the bay.
+9. **Stronger mission clarity** in Base, Briefing, Run, and result screens.
+10. **Updated progression pacing** centered on finishing the campaign through research + TAV growth.
 
 ---
 
 ## Core Flow
 
-`Intro -> Main Menu -> New/Load -> Base -> Operations (Loadout/Equippable/Storage/Crafting) -> Briefing -> Run -> Result`
+`Intro -> Main Menu -> New/Load -> Base -> Research / Operations / Drone Bay -> Briefing -> Run -> Result`
 
 ---
 
@@ -62,6 +60,7 @@ This branch includes a full pass on the issues list:
 - `U` Use The Claw
 - `Enter` Draft Selected
 - `L` Operations
+- `R` Research
 - `D` Deploy
 - `B` Drone Bay
 - `S` Settings
@@ -74,8 +73,9 @@ This branch includes a full pass on the issues list:
 ### Run
 - `C` Continue
 - `L` Log
-- `R` Retreat
-- `E` Use Aid
+- `I` Inventory
+- `E` Quick Aid
+- `X` Extract
 - `Q` Quit
 - `H` Help
 

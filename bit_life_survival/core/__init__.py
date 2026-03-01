@@ -25,6 +25,7 @@ from .persistence import (
     store_item,
     take_item,
 )
+from .research import RESEARCH_NODES, buy_research
 
 __all__ = [
     "ContentBundle",
@@ -53,4 +54,6 @@ __all__ = [
     "store_item",
     "step",
     "take_item",
+    "RESEARCH_NODES",
+    "buy_research",
 ]
